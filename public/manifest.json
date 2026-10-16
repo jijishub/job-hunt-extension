@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Job Hunt · Fill",
+  "version": "1.0.0",
+  "description": "Your pink application sidekick. Three resumes, your AI gateway, fewer repetitive forms.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "scripting", "activeTab", "sidePanel", "unlimitedStorage"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open Job Hunt Fill", "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" } },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "side_panel": { "default_path": "index.html" },
+  "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+J" }, "description": "Open Job Hunt Fill" } },
+  "content_security_policy": { "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" }
+}
