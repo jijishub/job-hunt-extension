@@ -23,6 +23,7 @@ function pdfFixture() {
 const fixture = `<!doctype html><title>Example Co · Application</title><body>
 <form><label>First name<input id="first" name="firstName"></label><label>Last name<input id="last" value="Keep me"></label>
 <label>Email<input id="email" type="email"></label><label>Why this role?<textarea id="why"></textarea></label>
+<label>Additional skills<textarea id="extra"></textarea></label>
 <label>Country<select id="country"><option value="">Choose</option><option value="PH">Philippines</option></select></label>
 <label>Resume<input type="file" id="resume" accept=".txt,.pdf,.docx"></label>
 <label>I agree to terms<input id="consent" type="checkbox"></label><input type="password" id="password">
@@ -85,8 +86,16 @@ try {
     const input = JSON.parse(payload.messages[1].content);
     assert.equal(payload.model, 'luna');
     assert.ok(!JSON.stringify(input).includes('Keep me'));
+    if (input.field) {
+      assert.equal(payload.max_tokens, 1200);
+      assert.equal(input.fields, undefined, 'revision sends only one field');
+      const revised = /Additional skills/.test(input.field.label) ? 'I also speak Spanish.' : 'My operations and customer support experience fit this role.';
+      const answers = input.request.includes('unknown credential') ? [] : [{ id: input.field.id, value: revised }, { id: 'invented', value: 'Must not affect other fields' }];
+      await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers }) } }] } });
+      return;
+    }
     const f = input.fields.find(f => /Why this role/.test(f.label));
-    await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers: [{ id: f.id, value: 'My operations experience fits this role.' }, { id: 'invented', value: 'Ignore me' }] }) } }], usage: { total_tokens: 180 } } });
+    await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers: f ? [{ id: f.id, value: 'My operations experience fits this role.' }, { id: 'invented', value: 'Ignore me' }] : [] }) } }], usage: { total_tokens: 180 } } });
   });
   await panel.getByRole('button', { name: 'Draft missing answers' }).click();
   await panel.getByRole('status').filter({ hasText: '1 AI answers added' }).waitFor();
@@ -108,14 +117,48 @@ try {
   await panel.getByRole('button', { name: 'Scan page again' }).click();
   await panel.getByRole('status').filter({ hasText: 'Page scanned' }).waitFor();
   await panel.getByRole('button', { name: 'Draft missing answers' }).click();
-  await panel.getByRole('status').filter({ hasText: 'All available suggestions' }).waitFor();
-  assert.equal(requests, 1, 'cached answers avoid a second request');
+  await panel.getByRole('status').filter({ hasText: '0 AI answers added' }).waitFor();
+  assert.equal(requests, 2, 'cached answer reused; only the still-unknown field is requested');
   await panel.locator('#speed').selectOption('gentle');
   await panel.getByRole('button', { name: 'Fill reviewed answers' }).click();
   await panel.getByRole('button', { name: 'Stop', exact: true }).click();
   await panel.getByRole('status').filter({ hasText: 'Stopped' }).waitFor();
   await panel.getByRole('button', { name: 'Undo last fill' }).click();
   await panel.getByRole('status').filter({ hasText: 'Restored' }).waitFor();
+  await panel.locator('#speed').selectOption('instant');
+  await application.locator('#first').fill('Leave this alone');
+  await application.locator('#why').fill('Original page answer');
+  const whyKey = await panel.locator('#repair-field option').evaluateAll(options => options.find(o => o.textContent === 'Why this role?').value);
+  await panel.locator('#repair-field').selectOption(whyKey);
+  await panel.getByLabel('WHAT SHOULD AI ADD OR CHANGE?').fill('Include my customer support experience.');
+  await panel.getByRole('button', { name: 'Update this answer with AI' }).click();
+  await panel.getByRole('status').filter({ hasText: 'One answer updated' }).waitFor();
+  assert.equal(await application.locator('#why').inputValue(), 'Original page answer', 'revision does not fill automatically');
+  const whyAnswer = panel.locator('.answer').filter({ hasText: 'Why this role?' }).locator('[data-value]');
+  assert.equal(await whyAnswer.inputValue(), 'My operations and customer support experience fit this role.');
+  await panel.getByRole('button', { name: 'Fill this field', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: 'Selected field filled' }).waitFor();
+  assert.equal(await application.locator('#why').inputValue(), 'My operations and customer support experience fit this role.');
+  assert.equal(await application.locator('#first').inputValue(), 'Leave this alone', 'targeted fill leaves other fields unchanged');
+  assert.equal(await panel.locator('#overwrite').isChecked(), false, 'global overwrite stays disabled');
+  await panel.getByRole('button', { name: 'Undo last fill' }).click();
+  await panel.getByRole('status').filter({ hasText: 'Restored' }).waitFor();
+  assert.equal(await application.locator('#why').inputValue(), 'Original page answer');
+  await panel.locator('#repair-prompt').fill('Add an unknown credential.');
+  await panel.getByRole('button', { name: 'Update this answer with AI' }).click();
+  await panel.getByRole('alert').filter({ hasText: 'previous answer is kept' }).waitFor();
+  assert.equal(await whyAnswer.inputValue(), 'My operations and customer support experience fit this role.');
+  assert.equal(await panel.locator('#repair-prompt').inputValue(), 'Add an unknown credential.');
+  const extraKey = await panel.locator('#repair-field option').evaluateAll(options => options.find(o => o.textContent === 'Additional skills').value);
+  await panel.locator('#repair-field').selectOption(extraKey);
+  await panel.locator('#repair-prompt').fill('I also speak Spanish. Add that.');
+  await panel.getByRole('button', { name: 'Update this answer with AI' }).click();
+  await panel.getByRole('status').filter({ hasText: 'One answer updated' }).waitFor();
+  assert.equal(await panel.locator('.answer').filter({ hasText: 'Additional skills' }).locator('[data-value]').inputValue(), 'I also speak Spanish.', 'a skipped field can receive a new draft');
+  await panel.getByRole('button', { name: 'Fill this field', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: 'Selected field filled' }).waitFor();
+  assert.equal(await application.locator('#extra').inputValue(), 'I also speak Spanish.');
+  assert.equal(await application.locator('#first').inputValue(), 'Leave this alone');
   await mkdir('artifacts', { recursive: true });
   await panel.screenshot({ path: 'artifacts/fill-panel.png', fullPage: true });
   await panel.setViewportSize({ width: 320, height: 850 });
@@ -139,7 +182,7 @@ try {
   await panel.getByRole('button', { name: 'Resumes', exact: false }).click();
   await panel.getByText('replacement.txt', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log('PASS: installed extension, profile persistence, PDF/DOCX/TXT import, replacement, 3 slots, scan, shadow DOM, iframe, mocked gateway, cache, file upload, existing values, no consent/submit, stop, undo, 320px layout.');
+  console.log('PASS: installed extension, PDF/DOCX/TXT, scan/fill, cache, per-field AI revision, skipped-field recovery, preserved drafts on failure, targeted replacement/undo, existing values, no consent/submit, stop, 320px layout.');
 } finally {
   await context?.close(); server.close(); await rm(profile, { recursive: true, force: true });
 }

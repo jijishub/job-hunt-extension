@@ -13,6 +13,8 @@ A small, very pink Chrome / Edge extension for getting through job applications 
 7. Open the real job application form. **Scan current page** finds profile matches and resume uploads. **Draft missing answers with AI** supplies more suggestions. Edit or untick suggestions, then **Fill reviewed answers**.
 8. Review the result on the site. Click Next or Submit yourself. Scan each new page. **Undo last fill** restores fields changed during the last fill in each frame. Undo cannot retract a file already uploaded to a remote server by the job site.
 
+To fix an incomplete or skipped answer, use **Something missing?** under the review list. Select a scanned field, add a prompt such as “Include my customer support experience and keep it under 80 words,” and click **Update this answer with AI**. Review the revised answer above, then click **Fill this field** to replace only that field, even if it already has a value. Other page values and the global replacement setting stay unchanged. You can also edit the revised answer manually before filling. This request sends only the selected field, its current draft (or scanned value), your prompt, profile and active resume; it is capped at 1,200 output tokens and is not saved to the reusable AI cache. New facts in the prompt apply to this revision; save recurring facts in Profile. Failed revisions keep your previous draft.
+
 The tool fills one open application page at a time. Instant, Quick and Gentle typing are available. Existing answers are preserved unless you turn on replacement. It never clicks Next or Submit, solves CAPTCHAs, or chooses consent/checkbox/radio answers.
 
 ## AI and token use
