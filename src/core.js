@@ -7,17 +7,21 @@ export const profileFields = [
   ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'],
   ['phone', 'Phone'], ['city', 'City'], ['country', 'Country'],
   ['linkedin', 'LinkedIn URL'], ['website', 'Portfolio / website'],
+  ['currentSalary', 'Current salary (optional · include currency / period)'],
   ['salary', 'Expected salary (include currency / period)'], ['notice', 'Notice period / availability']
 ];
 export function normalize(value) { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 export function localAnswer(field, profile) {
   const text = normalize(`${field.label} ${field.autocomplete || ''} ${field.name || ''}`);
+  if (/country calling code/.test(text)) return '';
+  if (field.type === 'custom-select' && normalize(field.label) === 'current location') return profile.country || '';
   const aliases = {
     firstName: /\b(first name|given name|given name|firstname)\b/,
     lastName: /\b(last name|family name|surname|lastname)\b/,
-    email: /\b(e mail|email)\b/, phone: /\b(phone|telephone|mobile|tel)\b/,
+    email: /\b(e mail|email)\b/, phone: /\b(phone|telephone|mobile|tel|contact number)\b/,
     city: /\b(city|address level2)\b/, country: /\b(country|country name)\b/,
     linkedin: /\blinkedin\b/, website: /\b(website|portfolio|personal site)\b/,
+    currentSalary: /\b(current (?:basic )?(?:salary|compensation|pay)|present salary|last drawn salary|currentsalary)\b/,
     salary: /\b(expected salary|salary expectation|desired salary)\b/,
     notice: /\b(notice period|availability|available to start)\b/
   };
@@ -35,9 +39,10 @@ export function validateAnswers(raw, fields) {
   const byId = new Map(fields.map(f => [f.id, f]));
   const seen = new Set();
   return raw.answers.filter(a => {
-    const f = byId.get(a.id);
+    const f = byId.get(a?.id);
     if (!f || seen.has(a.id) || typeof a.value !== 'string' || !a.value.trim() || a.value.length > 6000 || f.type === 'file') return false;
-    if (f.options?.length && !f.options.some(o => normalize(o.label) === normalize(a.value) || o.value === a.value)) return false;
+    const choices = f.multiple ? a.value.split('\n').map(v => v.trim()).filter(Boolean) : [a.value];
+    if (f.options?.length && !f.optionsIncomplete && !choices.every(value => f.options.some(o => normalize(o.label) === normalize(value) || o.value === value))) return false;
     if (f.type === 'checkbox' && !['true', 'false'].includes(a.value)) return false;
     seen.add(a.id); return true;
   }).map(a => ({ id: a.id, value: a.value, source: 'AI' }));

@@ -63,13 +63,15 @@ try {
     window.testTarget = target.id;
     chrome.tabs.query = async () => [await chrome.tabs.get(window.testTarget)];
   }, origin);
-  await panel.getByRole('button', { name: 'Profile', exact: false }).click();
+  await panel.locator('[data-tab=profile]').click();
   await panel.getByLabel('First name', { exact: true }).fill('Jiji');
   await panel.getByLabel('Last name', { exact: true }).fill('Casia');
   await panel.getByLabel('Email', { exact: true }).fill('jiji@example.com');
   await panel.getByLabel('City', { exact: true }).fill('Manila');
   await panel.getByLabel('Country', { exact: true }).fill('Philippines');
   await panel.getByLabel('Phone', { exact: true }).fill('09123456789');
+  assert.equal(await panel.getByLabel('Current salary (optional', { exact: false }).getAttribute('required'), null);
+  await panel.getByLabel('Current salary (optional', { exact: false }).fill('PHP 30,000 / month');
   await panel.getByRole('button', { name: 'Save my profile' }).click();
   await panel.getByRole('status').filter({ hasText: 'Profile saved' }).waitFor();
   await panel.getByRole('button', { name: 'Resumes', exact: false }).click();
@@ -181,6 +183,8 @@ try {
   await panel.reload();
   await panel.getByRole('button', { name: 'Resumes', exact: false }).click();
   await panel.getByText('replacement.txt', { exact: true }).waitFor();
+  await panel.locator('[data-tab=profile]').click();
+  assert.equal(await panel.getByLabel('Current salary (optional', { exact: false }).inputValue(), 'PHP 30,000 / month');
   assert.deepEqual(errors, []);
   console.log('PASS: installed extension, PDF/DOCX/TXT, scan/fill, cache, per-field AI revision, skipped-field recovery, preserved drafts on failure, targeted replacement/undo, existing values, no consent/submit, stop, 320px layout.');
 } finally {

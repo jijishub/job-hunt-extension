@@ -13,11 +13,34 @@ test('AI answers must reference known fields and available select options', () =
   assert.deepEqual(valid, [{ id: 'a', value: 'Yes', source: 'AI' }]);
   assert.equal(validateAnswers({ answers: [{ id: 'b', value: 'PH' }] }, fields).length, 1);
 });
+test('current salary is optional and distinct from expected salary', () => {
+  const profile = { currentSalary: 'PHP 30,000 / month', salary: 'PHP 45,000 / month' };
+  for (const label of ['Current salary', 'Current basic salary', 'Present salary', 'Last drawn salary', 'Current compensation']) {
+    assert.equal(localAnswer({ label }, profile), profile.currentSalary);
+    assert.equal(localAnswer({ label }, { salary: profile.salary }), '');
+  }
+  assert.equal(localAnswer({ label: 'Expected salary' }, profile), profile.salary);
+  assert.equal(localAnswer({ label: 'Expected salary' }, { currentSalary: profile.currentSalary }), '');
+  assert.equal(localAnswer({ label: 'Salary' }, profile), '', 'ambiguous salary fields are left for review');
+});
 test('gateway URL rejects unsafe protocols and embedded credentials', () => {
   assert.equal(gatewayURL('https://api.jizellecasia.site/v1/'), 'https://api.jizellecasia.site/v1/chat/completions');
   assert.throws(() => gatewayURL('http://example.com/v1'));
   assert.throws(() => gatewayURL('https://user:secret@example.com/v1'));
   assert.throws(() => gatewayURL('https://example.com/v1?key=secret'));
+});
+test('partial searchable dropdowns allow labels for runtime verification; complete and multi lists stay constrained', () => {
+  const fields = [
+    { id: 'school', type: 'custom-select', options: [{ label: 'Aalto University', value: 'Aalto University' }], optionsIncomplete: true },
+    { id: 'skills', type: 'custom-select', multiple: true, options: [{ label: 'Python', value: 'Python' }, { label: 'SQL', value: 'SQL' }] },
+    { id: 'country', type: 'custom-select', options: [{ label: 'Philippines', value: 'Philippines' }] }
+  ];
+  const valid = validateAnswers({ answers: [{ id: 'school', value: 'National University of Singapore' }, { id: 'skills', value: 'Python\nSQL' }, { id: 'country', value: 'Unknown' }] }, fields);
+  assert.equal(valid.length, 2);
+  assert.equal(validateAnswers({ answers: [{ id: 'skills', value: 'Python\nUnknown' }] }, fields).length, 0);
+  assert.equal(localAnswer({ type: 'custom-select', label: 'Contact Number — country calling code' }, { phone: '09123456789', country: 'Philippines' }), '');
+  assert.equal(localAnswer({ type: 'custom-select', label: 'Current Location' }, { country: 'Philippines' }), 'Philippines');
+  assert.equal(localAnswer({ type: 'text', label: 'Contact Number' }, { phone: '09123456789' }), '09123456789');
 });
 test('parses fenced JSON and reports malformed content', () => {
   assert.deepEqual(parseJSON('```json\n{"answers":[]}\n```'), { answers: [] });
