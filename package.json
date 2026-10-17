@@ -1,6 +1,6 @@
 {
   "name": "job-hunt-fill",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "test:browser": "node tests/browser.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test:dropdowns": "node tests/dropdowns.mjs",
+    "test:fill": "node tests/fill-verification.mjs",
     "test:shopee": "node tests/shopee-live.mjs"
   },
   "dependencies": {

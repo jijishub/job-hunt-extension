@@ -34,6 +34,22 @@
     const tags = [...trigger.querySelectorAll('.shopee-selector--tag .text')].map(text);
     return tags.length ? tags.join('\n') : text(trigger.querySelector('.shopee-selector__inner'));
   }
+  function fieldContext(el) {
+    // Find the nearest small group of controls, such as one employment card.
+    // Send only headings and supported field facts, never arbitrary page text.
+    for (let group = el.parentElement; group && !group.matches('form,body,html'); group = group.parentElement) {
+      const controls = [...group.querySelectorAll('input,textarea,select,.shopee-select')].filter(node =>
+        (custom(node) || !node.closest('.shopee-select')) && fieldVisible(node) && !node.disabled &&
+        !['hidden', 'password', 'file', 'checkbox', 'radio', 'submit', 'button', 'reset'].includes(node.type) &&
+        !/consent|agree|certif|attest|terms|privacy|signature|subscribe/i.test(label(node)));
+      const heading = text(group.querySelector('legend,h1,h2,h3,h4,[role="heading"]')).slice(0, 240);
+      if (controls.length < 2 && !heading) continue;
+      if (controls.length > 12) break;
+      return { heading,
+        fields: controls.map(node => ({ label: label(node), value: (custom(node) ? customValue(node) : node.value || '').slice(0, 600) })) };
+    }
+    return undefined;
+  }
   const multiple = el => !!el.querySelector('.shopee-option.multiple, .shopee-selector.multiple') || /up to \d+/i.test(text(el.querySelector('.placeholder')));
   function scan() {
     if (busy) throw new Error('Stop filling before scanning again.');
@@ -46,9 +62,11 @@
       fields.set(id, el);
       const group = el.closest('fieldset');
       const question = group?.querySelector('legend');
-      result.push({ id, type, name: el.name, label: (question ? text(question) + ' — ' : '') + label(el), autocomplete: el.autocomplete,
+      result.push({ id, type, name: el.name, context: fieldContext(el), label: (question ? text(question) + ' — ' : '') + label(el), autocomplete: el.autocomplete,
         value: type === 'file' ? (el.files?.[0]?.name || '') : ['checkbox', 'radio'].includes(type) ? (el.checked ? 'true' : '') : el.value,
         required: el.required || el.getAttribute('aria-required') === 'true',
+        maxLength: el.maxLength >= 0 ? el.maxLength : undefined, minLength: el.minLength >= 0 ? el.minLength : undefined,
+        min: el.min || undefined, max: el.max || undefined, pattern: el.pattern || undefined,
         options: el.tagName === 'SELECT' ? [...el.options].filter(o => !o.disabled && o.value).map(o => ({ value: o.value, label: o.label })).slice(0, 250) : undefined,
         accept: type === 'file' ? el.accept : undefined
       });
@@ -60,7 +78,7 @@
       const item = el.closest('.shopee-form-item');
       const options = [...el.querySelectorAll('.shopee-option:not(.disabled):not(.is-disabled)')].map(o => ({ value: text(o), label: text(o) })).filter(o => o.value);
       const searchable = !!el.querySelector('.shopee-select__filter input');
-      result.push({ id, type: 'custom-select', label: label(el), name: item?.querySelector('.shopee-form-item__label')?.getAttribute('for') || '',
+      result.push({ id, type: 'custom-select', context: fieldContext(el), label: label(el), name: item?.querySelector('.shopee-form-item__label')?.getAttribute('for') || '',
         value: customValue(el), required: !!item?.querySelector('.star'), multiple: multiple(el),
         options: options.slice(0, 250), optionsIncomplete: searchable && (el.classList.contains('shopee-virtual-select') || options.length > 250), searchable });
     }
@@ -151,37 +169,54 @@
   async function fill({ answers, resume, speed, overwrite }) {
     if (busy) throw new Error('A fill is already running.');
     busy = true; stopped = false; originals = [];
-    const report = { filled: 0, skipped: 0, errors: [], stopped: false };
+    const report = { filled: 0, skipped: 0, rejected: 0, manual: 0, errors: [], results: [], stopped: false };
+    const pending = [];
+    const result = (id, status, message = '') => {
+      report.results.push({ id, status, message });
+      if (status === 'rejected' || status === 'manual') { report[status]++; report.errors.push(message); }
+    };
     try {
       for (const answer of answers) {
         if (stopped) break;
         const el = fields.get(answer.id);
-        if (!el?.isConnected || !fieldVisible(el) || el.disabled || el.readOnly) { report.skipped++; continue; }
+        if (!el?.isConnected || !fieldVisible(el) || el.disabled || el.readOnly) { report.skipped++; result(answer.id, 'manual', 'Field changed or is unavailable. Scan again.'); continue; }
         const type = el.type;
         const current = custom(el) ? customValue(el) : ['checkbox', 'radio'].includes(type) ? el.checked : type === 'file' ? el.files.length : el.value;
         // Consent, agreements, marketing and attestations always require a manual choice.
-        if ((current && !overwrite) || /consent|agree|certif|attest|terms|privacy|subscribe/i.test(label(el))) { report.skipped++; continue; }
+        if ((current && !overwrite) || /consent|agree|certif|attest|terms|privacy|signature|subscribe/i.test(label(el))) { report.skipped++; result(answer.id, 'skipped'); continue; }
         try {
+          if (!custom(el) && !['file', 'checkbox', 'radio'].includes(type) && el.tagName !== 'SELECT') {
+            const probe = el.cloneNode(false);
+            probe.value = answer.value;
+            const formatChanged = probe.value !== answer.value.replace(/\r\n/g, '\n');
+            if ((el.maxLength >= 0 && answer.value.length > el.maxLength) || (el.minLength > 0 && answer.value.length < el.minLength) || formatChanged || !probe.validity.valid) {
+              result(answer.id, 'manual', `${label(el)}: Answer does not meet the field's length, format or range requirements. Edit it before filling.`);
+              continue;
+            }
+          }
           const before = { el, value: custom(el) ? customValue(el) : el.value, checked: el.checked, files: type === 'file' ? [...el.files] : null };
+          let expected = answer.value;
           if (custom(el)) {
             originals.push(before);
             try { await setCustom(el, answer.value); }
             catch (e) { if (customValue(el) === before.value) originals.pop(); throw e; }
           } else if (type === 'file') {
-            if (!resume?.base64 || !/resume|cv|curriculum/i.test(label(el))) { report.skipped++; continue; }
+            if (!resume?.base64 || !/resume|cv|curriculum/i.test(label(el))) { report.skipped++; result(answer.id, 'skipped'); continue; }
             const bytes = Uint8Array.from(atob(resume.base64), c => c.charCodeAt(0));
             const file = new File([bytes], resume.name, { type: resume.type });
             const accept = el.accept.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
             if (accept.length && !accept.some(a => a.startsWith('.') ? file.name.toLowerCase().endsWith(a) : a.endsWith('/*') ? file.type.startsWith(a.slice(0, -1)) : file.type === a)) throw new Error('Selected resume type is not accepted by this upload.');
             const transfer = new DataTransfer(); transfer.items.add(file); originals.push(before); el.files = transfer.files;
+            expected = file.name;
             el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
           } else if (type === 'checkbox' || type === 'radio') {
             // These include legal, demographic, eligibility and custom site state. Leave manual.
-            report.skipped++; continue;
+            report.skipped++; result(answer.id, 'skipped'); continue;
           } else if (el.tagName === 'SELECT') {
             const wanted = answer.value.toLowerCase().trim();
             const option = [...el.options].find(o => !o.disabled && (o.value === answer.value || o.label.toLowerCase().trim() === wanted));
             if (!option) throw new Error('No matching option.');
+            expected = option.value;
             originals.push(before); setValue(el, option.value);
           } else {
             originals.push(before); el.focus();
@@ -192,8 +227,23 @@
             } else setValue(el, answer.value);
             el.blur();
           }
-          report.filled++;
-        } catch (e) { report.errors.push(`${label(el)}: ${e.message}`); }
+          if (stopped) {
+            report.manual++;
+            report.results.push({ id: answer.id, status: 'manual', message: `${label(el)}: Filling was interrupted. Review the partial value or use Undo.` });
+            break;
+          }
+          pending.push({ el, id: answer.id, expected });
+        } catch (e) { result(answer.id, 'rejected', `${label(el)}: ${e.message}`); }
+      }
+      // Let framework event handlers run, then read values back instead of
+      // assuming that dispatching input/change means the website accepted them.
+      if (pending.length) await sleep(250);
+      for (const { el, id, expected } of pending) {
+        const actual = custom(el) ? customValue(el) : el.type === 'file' ? el.files?.[0]?.name : el.value;
+        const accepted = custom(el) ? actual.split('\n').length === expected.split('\n').length && expected.split('\n').every(wanted => actual.split('\n').some(value => sameChoice(value, wanted))) : actual === expected.replace(/\r\n/g, '\n');
+        if (!el.isConnected || !accepted || (!custom(el) && el.validity && !el.validity.valid)) {
+          result(id, 'rejected', `${label(el)}: The website did not retain a valid answer. Review this field manually; scan again if the form changed.`);
+        } else { report.filled++; result(id, 'filled'); }
       }
       report.stopped = stopped;
       return report;

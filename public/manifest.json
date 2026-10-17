@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Hunt · Fill",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Your pink application sidekick. Three resumes, your AI gateway, fewer repetitive forms.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "scripting", "activeTab", "sidePanel", "unlimitedStorage"],

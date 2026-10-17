@@ -13,17 +13,19 @@ A small, very pink Chrome / Edge extension for getting through job applications 
 7. Open the real job application form. **Scan current page** finds profile matches and resume uploads. **Draft missing answers with AI** supplies more suggestions. Edit or untick suggestions, then **Fill reviewed answers**.
 8. Review the result on the site. Click Next or Submit yourself. Scan each new page. **Undo last fill** restores fields changed during the last fill in each frame. Undo cannot retract a file already uploaded to a remote server by the job site. Some custom single-select dropdowns do not offer a clear action: Undo can restore a previous choice, but cannot return those controls to blank. It reports any fields it cannot restore.
 
-To fix an incomplete or skipped answer, use **Something missing?** under the review list. Select a scanned field, add a prompt such as “Include my customer support experience and keep it under 80 words,” and click **Update this answer with AI**. Review the revised answer above, then click **Fill this field** to replace only that field, even if it already has a value. Other page values and the global replacement setting stay unchanged. You can also edit the revised answer manually before filling. This request sends only the selected field, its current draft (or scanned value), your prompt, profile and active resume; it is capped at 1,200 output tokens and is not saved to the reusable AI cache. New facts in the prompt apply to this revision; save recurring facts in Profile. Failed revisions keep your previous draft.
+To fix an incomplete or skipped answer, use **Something missing?** under the review list. Select a scanned field, add a prompt such as “Include my customer support experience and keep it under 80 words,” and click **Update this answer with AI**. Review the revised answer above, then click **Fill this field** to replace only that field, even if it already has a value. Other page values and the global replacement setting stay unchanged. You can also edit the revised answer manually before filling. This request sends the selected field with nearby employer/title context and format constraints, application URL/title, its current draft (or scanned value), your prompt, profile and active resume; it is capped at 1,200 output tokens and is not saved to the reusable AI cache. New facts in the prompt apply to this revision; save recurring facts in Profile. Failed revisions keep your previous draft.
 
-The tool fills one open application page at a time. Instant, Quick and Gentle typing are available. Existing answers are preserved unless you turn on replacement. It never clicks Next or Submit, solves CAPTCHAs, or chooses consent/checkbox/radio answers.
+For changes across several fields, use **General instructions** under the review list. For example: “Add descriptions for CloudJi and IT Specialist in their respective boxes, using the exact bullets from my resume.” Click **Prepare updates with AI**, review the separate answers, then **Fill these changes**. Employer and job title context helps distinguish repeated description fields. This request sends all eligible scanned fields, their scanned values and current drafts, nearby field context, profile and the full active resume text, with up to 6,000 output tokens. It bypasses the reusable cache. Filling replaces only the proposed, checked fields, including existing values; Undo restores the last fill. Add missing role sections on the site and scan again before requesting updates. This supports field updates on the current page; it does not add sections or navigate the site.
+
+The tool fills one open application page at a time. Instant, Quick and Gentle typing are available. Existing answers are preserved unless you turn on replacement or explicitly fill targeted changes. It never clicks Next or Submit, solves CAPTCHAs, or chooses consent/checkbox/radio answers.
 
 ## AI and token use
 
 - One OpenAI-compatible `/chat/completions` gateway configuration. Change the model ID to any Gemini, Luna, or Antigravity model your gateway actually exposes; website subscriptions are not API credentials.
 - Profile matches are local and require no AI request.
-- AI receives only unanswered field labels/options, your saved profile and the active resume's text, capped at 16,000 characters. It never receives full page HTML, other resume versions, or file binary.
+- Missing-answer drafts receive application URL/title, unanswered field labels/options, nearby role context and scanned values, format constraints, your saved profile and active resume text capped at 16,000 characters. General instructions also receive scanned values, drafts and nearby field context, plus the full active resume for exact bullet copying. AI never receives full page HTML, other resume versions, or file binary.
 - Draft output is capped at 2,500 tokens; contact extraction at 700; connection checks at 100. No automatic retries or background requests.
-- Successful answers are cached by field, options, profile, resume, gateway and model. Up to 250 cached answers are kept. Clear these in Settings.
+- Successful draft answers are cached by application URL, frame title/URL, field identity and role context, options, profile, resume, gateway and model. Repeated role fields and different applications have separate entries. Older label-only entries are ignored. Up to 250 cached answers are kept. Clear these in Settings.
 - All suggestions remain editable. AI can still make mistakes; review the application before submitting.
 
 ## Storage and page support
@@ -50,11 +52,14 @@ npm test
 npx playwright install chromium
 npm run test:browser
 npm run test:dropdowns
+npm run test:fill
 ```
 
 The Vite web preview lets you work on resumes, profile, and settings. Its local data is separate from the extension's data. Page filling requires the installed extension. Never enter your real gateway key on a publicly hosted preview you do not control.
 
 `npm run test:browser` loads the actual built extension in Chromium against a local application fixture. It checks imports, persistence, AI drafting with a mocked gateway, caching, iframe/shadow fields, preserving existing answers, attaching files, stop/undo, and narrow-panel layout. It does not contact the live gateway or submit an application. After rebuilding, click **Reload** on the extension's card and reopen its panel.
+
+All AI answer flows include nearby employer/title context. Profile matching excludes fields identified as employer, school, reference or emergency-contact details. Each reviewed answer can reveal its original scanned value. Native fields are checked against length, type, pattern and range constraints before writing; after a fill, values are read back after a short settling period. Rejected answers are reported instead of counted as filled. This verifies browser field state, not server acceptance or changes that happen later. `npm run test:fill` checks asynchronous rejection, constraints, accepted values, Undo and per-field result statuses.
 
 `npm run test:dropdowns` checks Shopee-style custom controls offline, including component state, external labels, searchable virtual options, multiple choices, existing-value protection, failed-choice preservation and Undo limitations. Optional `npm run test:shopee` repeats a small dropdown compatibility check against the public Shopee form with synthetic selections, no identity or files, and POST/PUT/PATCH/DELETE requests blocked after initial page loading. Neither check submits an application. Live compatibility checks depend on the job page remaining available.
 

@@ -5,14 +5,49 @@ export const defaults = {
 };
 export const profileFields = [
   ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email'],
-  ['phone', 'Phone'], ['city', 'City'], ['country', 'Country'],
+  ['phone', 'Phone'], ['addressLine1', 'Address line 1 (street / house number)'],
+  ['addressLine2', 'Address line 2 (apartment / unit, optional)'],
+  ['city', 'City'], ['state', 'State / province / region'], ['postalCode', 'Postal / ZIP code'], ['country', 'Country'],
   ['linkedin', 'LinkedIn URL'], ['website', 'Portfolio / website'],
   ['currentSalary', 'Current salary (optional · include currency / period)'],
   ['salary', 'Expected salary (include currency / period)'], ['notice', 'Notice period / availability']
 ];
 export function normalize(value) { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+export function isOtherPersonField(field) {
+  const identity = normalize(`${field.label || ''} ${field.name || ''} ${field.context?.heading || ''}`.replace(/([a-z])([A-Z])/g, '$1 $2'));
+  return /\b(employers?|company|references?|referees?|supervisors?|manager|emergency contacts?|schools?|university|institution)\b/.test(identity);
+}
+export function aiFieldData(field) {
+  return { id: field.key || field.id, label: field.label, name: field.name, context: field.context,
+    type: field.type, options: field.options, optionsIncomplete: field.optionsIncomplete, multiple: field.multiple,
+    currentValue: field.value, maxLength: field.maxLength, minLength: field.minLength, min: field.min, max: field.max, pattern: field.pattern };
+}
+export function answerCacheIdentity(field, page, profile, resume, settings) {
+  // Versioned so older, label-only cache entries can never be reused.
+  const frame = page.frames?.find(frame => frame.frameId === field.frameId);
+  return JSON.stringify(['context-v2', page.url, frame?.url, frame?.title, aiFieldData(field), profile, resume, settings.baseUrl, settings.model]);
+}
 export function localAnswer(field, profile) {
   const text = normalize(`${field.label} ${field.autocomplete || ''} ${field.name || ''}`);
+  if (['file', 'checkbox', 'radio'].includes(field.type)) return '';
+  if (isOtherPersonField(field)) return '';
+  const addressTokens = { 'address-line1': 'addressLine1', 'address-line2': 'addressLine2', 'address-level2': 'city', 'address-level1': 'state', 'postal-code': 'postalCode', 'country-name': 'country', country: 'country' };
+  const autocomplete = String(field.autocomplete || '').split(/\s+/);
+  const addressToken = autocomplete.find(token => addressTokens[token] || token === 'street-address');
+  if (addressToken === 'street-address') return profile.addressLine1 ? [profile.addressLine1, profile.addressLine2].filter(Boolean).join('\n') : '';
+  if (addressToken) return profile[addressTokens[addressToken]] || '';
+  const addressAliases = [
+    ['addressLine2', /^(?:address line 2|address line2|address 2|addressline2|street address 2|street line 2|apartment|unit|suite|apartment unit|apartment suite unit)(?: optional)?$/],
+    ['addressLine1', /^(?:address line 1|address line1|address 1|addressline1|street address|street address 1|street line 1|address|house number and street)$/],
+    ['state', /^(?:state|province|region|state province|state province region|province region)$/],
+    ['postalCode', /^(?:postal code|postalcode|postcode|post code|zip|zip code|zipcode|postal zip code|zip postal code)$/]
+  ];
+  for (const candidate of [field.label, field.name]) {
+    const addressLabel = normalize(String(candidate || '').replace(/([a-z])([A-Z])/g, '$1 $2')).replace(/^(?:your|home|residential|mailing|current) /, '').replace(/ (?:required|optional)$/, '');
+    if (/^(?:full|complete) (?:home |residential |mailing )?address$/.test(addressLabel)) return profile.addressLine1 ? [profile.addressLine1, profile.addressLine2, profile.city, profile.state, profile.postalCode, profile.country].filter(Boolean).join(', ') : '';
+    const match = addressAliases.find(([, pattern]) => pattern.test(addressLabel));
+    if (match) return profile[match[0]] || '';
+  }
   if (/country calling code/.test(text)) return '';
   if (field.type === 'custom-select' && normalize(field.label) === 'current location') return profile.country || '';
   const aliases = {
@@ -25,7 +60,6 @@ export function localAnswer(field, profile) {
     salary: /\b(expected salary|salary expectation|desired salary)\b/,
     notice: /\b(notice period|availability|available to start)\b/
   };
-  if (field.type === 'file' || field.type === 'checkbox' || field.type === 'radio') return '';
   if (/\b(full name|your name)\b/.test(text)) return [profile.firstName, profile.lastName].filter(Boolean).join(' ');
   for (const [key, re] of Object.entries(aliases)) if (re.test(text) && profile[key]) return profile[key];
   return '';

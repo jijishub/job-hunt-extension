@@ -24,6 +24,8 @@ const fixture = `<!doctype html><title>Example Co · Application</title><body>
 <form><label>First name<input id="first" name="firstName"></label><label>Last name<input id="last" value="Keep me"></label>
 <label>Email<input id="email" type="email"></label><label>Why this role?<textarea id="why"></textarea></label>
 <label>Additional skills<textarea id="extra"></textarea></label>
+<fieldset><legend>Work experience</legend><label>Employer<input value="CloudJi"></label><label>Job title<input value="Operations specialist"></label><label>Role Description<textarea id="cloud-role">Old CloudJi description</textarea></label></fieldset>
+<fieldset><legend>Work experience</legend><label>Employer<input value="Example IT"></label><label>Job title<input value="IT Specialist"></label><label>Role Description<textarea id="it-role">Old IT description</textarea></label></fieldset>
 <label>Country<select id="country"><option value="">Choose</option><option value="PH">Philippines</option></select></label>
 <label>Resume<input type="file" id="resume" accept=".txt,.pdf,.docx"></label>
 <label>I agree to terms<input id="consent" type="checkbox"></label><input type="password" id="password">
@@ -68,6 +70,10 @@ try {
   await panel.getByLabel('Last name', { exact: true }).fill('Casia');
   await panel.getByLabel('Email', { exact: true }).fill('jiji@example.com');
   await panel.getByLabel('City', { exact: true }).fill('Manila');
+  await panel.getByLabel('Address line 1 (street / house number)', { exact: true }).fill('12 Sample Street');
+  await panel.getByLabel('Address line 2 (apartment / unit, optional)', { exact: true }).fill('Unit 4');
+  await panel.getByLabel('State / province / region', { exact: true }).fill('Metro Manila');
+  await panel.getByLabel('Postal / ZIP code', { exact: true }).fill('0123');
   await panel.getByLabel('Country', { exact: true }).fill('Philippines');
   await panel.getByLabel('Phone', { exact: true }).fill('09123456789');
   assert.equal(await panel.getByLabel('Current salary (optional', { exact: false }).getAttribute('required'), null);
@@ -75,7 +81,7 @@ try {
   await panel.getByRole('button', { name: 'Save my profile' }).click();
   await panel.getByRole('status').filter({ hasText: 'Profile saved' }).waitFor();
   await panel.getByRole('button', { name: 'Resumes', exact: false }).click();
-  await panel.locator('[data-upload="0"]').setInputFiles({ name: 'operations.txt', mimeType: 'text/plain', buffer: Buffer.from('Jiji Casia\njiji@example.com\nOperations specialist with three years of experience in process improvement and customer support.') });
+  await panel.locator('[data-upload="0"]').setInputFiles({ name: 'operations.txt', mimeType: 'text/plain', buffer: Buffer.from('Jiji Casia\njiji@example.com\nOperations specialist with three years of experience in process improvement and customer support.\nCloudJi ? Operations specialist\n? Improved operations.\n? Supported customers.\nExample IT ? IT Specialist\n? Resolved IT issues.\n? Maintained systems.') });
   await panel.getByRole('status').filter({ hasText: 'Resume saved' }).waitFor();
   await panel.getByRole('button', { name: 'Fill', exact: false }).first().click();
   await panel.getByRole('button', { name: 'Scan current page' }).click();
@@ -87,12 +93,36 @@ try {
     const payload = route.request().postDataJSON();
     const input = JSON.parse(payload.messages[1].content);
     assert.equal(payload.model, 'luna');
-    assert.ok(!JSON.stringify(input).includes('Keep me'));
+    assert.ok(input.application.url.startsWith(origin + '/application'));
+    if (!input.request || input.field) assert.ok(!JSON.stringify(input).includes('Keep me'));
+    if (input.request && input.fields) {
+      assert.equal(payload.max_tokens, 6000);
+      const roles = input.fields.filter(f => /Role Description/.test(f.label));
+      assert.equal(roles.length, 2);
+      assert.ok(roles[0].context.fields.some(f => f.value === 'CloudJi'));
+      assert.ok(roles[1].context.fields.some(f => f.value === 'IT Specialist'));
+      assert.match(input.resume, /process improvement and customer support/);
+      const answers = input.request.includes('unknown credential') ? [] : [
+        { id: roles[0].id, value: '• Improved operations.\n• Supported customers.' },
+        { id: roles[1].id, value: '• Resolved IT issues.\n• Maintained systems.' },
+        { id: 'invented', value: 'Must not affect other fields' }
+      ];
+      await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers }) } }] } });
+      return;
+    }
     if (input.field) {
       assert.equal(payload.max_tokens, 1200);
       assert.equal(input.fields, undefined, 'revision sends only one field');
-      const revised = /Additional skills/.test(input.field.label) ? 'I also speak Spanish.' : 'My operations and customer support experience fit this role.';
+      const revised = /Role Description/.test(input.field.label)
+        ? (input.field.context.fields.some(f => f.value === 'CloudJi') ? 'CloudJi revised description.' : 'IT revised description.')
+        : /Additional skills/.test(input.field.label) ? 'I also speak Spanish.' : 'My operations and customer support experience fit this role.';
       const answers = input.request.includes('unknown credential') ? [] : [{ id: input.field.id, value: revised }, { id: 'invented', value: 'Must not affect other fields' }];
+      await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers }) } }] } });
+      return;
+    }
+    const roles = input.fields.filter(f => /Role Description/.test(f.label));
+    if (roles.length) {
+      const answers = roles.map(f => ({ id: f.id, value: f.context.fields.some(f => f.value === 'CloudJi') ? 'CloudJi drafted description.' : 'IT drafted description.' }));
       await route.fulfill({ json: { choices: [{ message: { content: JSON.stringify({ answers }) } }] } });
       return;
     }
@@ -112,6 +142,7 @@ try {
   assert.equal(await application.locator('#phone').inputValue(), '09123456789');
   assert.equal(await application.locator('#consent').isChecked(), false);
   assert.equal(await application.evaluate(() => !!window.submitted), false);
+
   await panel.getByRole('button', { name: 'Undo last fill' }).click();
   await panel.getByRole('status').filter({ hasText: 'Restored 7 fields' }).waitFor();
   assert.equal(await application.locator('#first').inputValue(), '');
@@ -161,6 +192,63 @@ try {
   await panel.getByRole('status').filter({ hasText: 'Selected field filled' }).waitFor();
   assert.equal(await application.locator('#extra').inputValue(), 'I also speak Spanish.');
   assert.equal(await application.locator('#first').inputValue(), 'Leave this alone');
+  await panel.locator('#general-prompt').fill('Add role descriptions for CloudJi and the IT Specialist role using exact resume bullets.');
+  await panel.getByRole('button', { name: 'Prepare updates with AI' }).click();
+  await panel.getByRole('status').filter({ hasText: '2 fields updated from your instructions' }).waitFor();
+  assert.equal(await application.locator('#cloud-role').inputValue(), 'Old CloudJi description', 'general instructions require review before filling');
+  const roleAnswers = panel.locator('.answer').filter({ hasText: 'Role Description' }).locator('[data-value]');
+  assert.equal(await roleAnswers.count(), 2, 'repeated labels produce separate answers');
+  assert.equal(await roleAnswers.nth(0).inputValue(), '• Improved operations.\n• Supported customers.');
+  assert.equal(await roleAnswers.nth(1).inputValue(), '• Resolved IT issues.\n• Maintained systems.');
+  await panel.getByRole('button', { name: 'Fill these changes', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: '2 instructed fields filled' }).waitFor();
+  assert.equal(await application.locator('#cloud-role').inputValue(), '• Improved operations.\n• Supported customers.');
+  assert.equal(await application.locator('#it-role').inputValue(), '• Resolved IT issues.\n• Maintained systems.');
+  assert.equal(await application.locator('#first').inputValue(), 'Leave this alone');
+  assert.equal(await application.locator('#extra').inputValue(), 'I also speak Spanish.');
+  assert.equal(await panel.locator('#overwrite').isChecked(), false);
+  await panel.getByRole('button', { name: 'Undo last fill' }).click();
+  await panel.getByRole('status').filter({ hasText: 'Restored 2 fields' }).waitFor();
+  assert.equal(await application.locator('#cloud-role').inputValue(), 'Old CloudJi description');
+  assert.equal(await application.locator('#it-role').inputValue(), 'Old IT description');
+  await panel.locator('#general-prompt').fill('Add an unknown credential.');
+  await panel.getByRole('button', { name: 'Prepare updates with AI' }).click();
+  await panel.getByRole('alert').filter({ hasText: 'previous answers are kept' }).waitFor();
+  assert.equal(await roleAnswers.nth(0).inputValue(), '• Improved operations.\n• Supported customers.');
+  assert.equal(await application.locator('#consent').isChecked(), false);
+  assert.equal(await application.evaluate(() => !!window.submitted), false);
+  // All AI entry points must distinguish repeated role labels, and cache entries
+  // must remain separate for each role and each job URL.
+  await application.locator('#cloud-role').fill('');
+  await application.locator('#it-role').fill('');
+  await panel.getByRole('button', { name: 'Scan page again' }).click();
+  await panel.getByRole('status').filter({ hasText: 'Page scanned' }).waitFor();
+  await panel.getByRole('button', { name: 'Draft missing answers' }).click();
+  await panel.getByRole('status').filter({ hasText: '2 AI answers added' }).waitFor();
+  const draftedRoles = panel.locator('.answer').filter({ hasText: 'Role Description' }).locator('[data-value]');
+  assert.equal(await draftedRoles.nth(0).inputValue(), 'CloudJi drafted description.');
+  assert.equal(await draftedRoles.nth(1).inputValue(), 'IT drafted description.');
+  await panel.getByRole('button', { name: 'Scan page again' }).click();
+  await panel.getByRole('status').filter({ hasText: 'Page scanned' }).waitFor();
+  const beforeCacheRequest = requests;
+  await panel.getByRole('button', { name: 'Draft missing answers' }).click();
+  await panel.getByRole('status').filter({ hasText: 'All available suggestions are ready' }).waitFor();
+  assert.equal(requests, beforeCacheRequest, 'each repeated role reuses only its own cached answer');
+  assert.equal(await draftedRoles.nth(0).inputValue(), 'CloudJi drafted description.');
+  assert.equal(await draftedRoles.nth(1).inputValue(), 'IT drafted description.');
+  await application.evaluate(() => history.pushState({}, '', '/application?job=another'));
+  await panel.getByRole('button', { name: 'Scan page again' }).click();
+  await panel.getByRole('status').filter({ hasText: 'Page scanned' }).waitFor();
+  await panel.getByRole('button', { name: 'Draft missing answers' }).click();
+  await panel.getByRole('status').filter({ hasText: '2 AI answers added' }).waitFor();
+  assert.equal(requests, beforeCacheRequest + 1, 'another application URL cannot reuse prior job answers');
+  const cloudKey = await panel.locator('#repair-field option').evaluateAll(options => options.find(o => o.textContent.includes('Role Description') && o.textContent.includes('CloudJi')).value);
+  await panel.locator('#repair-field').selectOption(cloudKey);
+  await panel.locator('#repair-prompt').fill('Update this role description using my resume.');
+  await panel.getByRole('button', { name: 'Update this answer with AI' }).click();
+  await panel.getByRole('status').filter({ hasText: 'One answer updated' }).waitFor();
+  assert.equal(await draftedRoles.nth(0).inputValue(), 'CloudJi revised description.', 'single-field revision receives employer context');
+  assert.equal(await draftedRoles.nth(1).inputValue(), 'IT drafted description.');
   await mkdir('artifacts', { recursive: true });
   await panel.screenshot({ path: 'artifacts/fill-panel.png', fullPage: true });
   await panel.setViewportSize({ width: 320, height: 850 });
@@ -185,8 +273,12 @@ try {
   await panel.getByText('replacement.txt', { exact: true }).waitFor();
   await panel.locator('[data-tab=profile]').click();
   assert.equal(await panel.getByLabel('Current salary (optional', { exact: false }).inputValue(), 'PHP 30,000 / month');
+  assert.equal(await panel.getByLabel('Address line 1 (street / house number)', { exact: true }).inputValue(), '12 Sample Street');
+  assert.equal(await panel.getByLabel('Address line 2 (apartment / unit, optional)', { exact: true }).inputValue(), 'Unit 4');
+  assert.equal(await panel.getByLabel('State / province / region', { exact: true }).inputValue(), 'Metro Manila');
+  assert.equal(await panel.getByLabel('Postal / ZIP code', { exact: true }).inputValue(), '0123');
   assert.deepEqual(errors, []);
-  console.log('PASS: installed extension, PDF/DOCX/TXT, scan/fill, cache, per-field AI revision, skipped-field recovery, preserved drafts on failure, targeted replacement/undo, existing values, no consent/submit, stop, 320px layout.');
+  console.log('PASS: installed extension, PDF/DOCX/TXT, scan/fill, cache, general instructions across repeated roles, role context, targeted multi-field fill/undo, per-field AI revision, skipped-field recovery, preserved drafts on failure, targeted replacement/undo, existing values, no consent/submit, stop, 320px layout.');
 } finally {
   await context?.close(); server.close(); await rm(profile, { recursive: true, force: true });
 }
