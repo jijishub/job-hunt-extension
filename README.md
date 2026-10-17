@@ -1,13 +1,13 @@
 # Job Hunt · Fill 🌸
 
-A small, very pink Chrome / Edge extension for getting through job applications faster. Built independently for your internal workflow, with the blush palette and gateway defaults from [Job Hunt](https://github.com/jijishub/job-hunt). The original Aullevo files in `dist/` are preserved and are not used by this app.
+A small, very pink Chrome / Edge extension for getting through job applications faster and reviewing saved postings locally. Built independently for your internal workflow, with the blush palette and gateway defaults from [Job Hunt](https://github.com/jijishub/job-hunt). The original Aullevo files in `dist/` are preserved and are not used by this app.
 
 ## Start using it
 
 1. Open `chrome://extensions` (or `edge://extensions`).
-2. Enable **Developer mode**, choose **Load unpacked**, and select this project's **`build`** folder. If using the ZIP, extract it first and select the extracted folder containing `manifest.json`.
+2. Enable **Developer mode**, choose **Load unpacked**, and select this project's **`build`** folder. For a source checkout, build it using the commands below first. If using the ZIP, extract it first and select the extracted folder containing `manifest.json`.
 3. Pin **Job Hunt · Fill**, then click its pink flower icon. The side panel opens beside your application. Shortcut: **Alt+Shift+J**.
-4. In **Settings**, paste your private gateway API key and test the connection. Defaults: `https://api.jizellecasia.site/v1`, model `luna`, matching your Job Hunt repo. The test uses the saved settings.
+4. For AI answers, paste your private gateway API key in **Settings** and test the connection. Defaults: `https://api.jizellecasia.site/v1`, model `luna`, matching your Job Hunt repo. The test uses the saved settings. Local posting capture needs no gateway key or resume.
 5. In **Resumes**, upload up to three PDF, DOCX, or TXT resumes, each under 5 MB. Replacing a file keeps the same slot. Choose the version for the role. Optional: **Build profile with AI**, then check the extracted contacts.
 6. Save your recurring details in **Profile**. Current salary is optional and stored separately from expected salary; include currency and pay period (for example, PHP 30,000 / month), or leave it blank. Add any work authorization, availability or other facts you want AI to use; unknown facts stay blank.
 7. Open the real job application form. **Scan current page** finds profile matches and resume uploads. **Draft missing answers with AI** supplies more suggestions. Edit or untick suggestions, then **Fill reviewed answers**.
@@ -18,6 +18,22 @@ To fix an incomplete or skipped answer, use **Something missing?** under the rev
 For changes across several fields, use **General instructions** under the review list. For example: “Add descriptions for CloudJi and IT Specialist in their respective boxes, using the exact bullets from my resume.” Click **Prepare updates with AI**, review the separate answers, then **Fill these changes**. Employer and job title context helps distinguish repeated description fields. This request sends all eligible scanned fields, their scanned values and current drafts, nearby field context, profile and the full active resume text, with up to 6,000 output tokens. It bypasses the reusable cache. Filling replaces only the proposed, checked fields, including existing values; Undo restores the last fill. Add missing role sections on the site and scan again before requesting updates. This supports field updates on the current page; it does not add sections or navigate the site.
 
 The tool fills one open application page at a time. Instant, Quick and Gentle typing are available. Existing answers are preserved unless you turn on replacement or explicitly fill targeted changes. It never clicks Next or Submit, solves CAPTCHAs, or chooses consent/checkbox/radio answers.
+
+## Local posting capture pilot
+
+Open **Capture** in the side panel and click **Capture current posting** on an individual posting. The extension saves the extraction locally before showing a preview. Correct the fields, compare the requirements with the full posting, and click **Save corrections locally**. Unknown facts stay blank. A review mark records your check; it does not dismiss extraction warnings or trigger an assessment.
+
+**Preserved source & provenance** keeps the original posting excerpts and field origins separate from corrections. When several postings are found, choose one explicitly. Changing an already selected opening creates a new capture and keeps the previous one. Saved captures can be reopened, deleted, or exported as local pilot JSON. Unsaved corrections survive switching panel tabs but require saving before closing the panel. **Delete all local data** also deletes captures.
+
+The initial adapters cover the sampled Greenhouse and Lever layouts, with a generic JobPosting JSON-LD reader and a cautious description-region fallback. This is not a claim of platform-wide compatibility. Application-only pages and unrelated pages are rejected when no posting content is found. Frames and closed shadow roots are not read; collapsed, conflicting, structured-only, short or truncated content remains flagged for review. No AI structuring is used in this pilot.
+
+**Capturing a page stays local.** It stores no pipeline status or candidate profile. Assessment and local test delivery each require a separate explicit action. Keep using the existing tracker/Gemini import workflow when extraction is incomplete. The exported local schema is not the tracker API contract. See [extraction evidence and limitations](docs/extraction-pilot.md).
+
+Use **Resolve review warnings** to select a source or record a correction/irrelevance decision with an explanation. Then review and save. Editing facts clears resolutions and review. **Prepare offline request** validates a request, shows UTF-8 bytes and advisory blockers, and lets you download its exact JSON. It attaches a current matching fit when available; **Prepare as Unassessed** omits it. Preparation never uploads or calls AI. Oversized requests leave the full local capture/export intact. See [source and review rules](docs/offline-transport.md).
+
+Choose the resume you intend to apply with, optionally save explicit preference notes, and click **Assess selected resume**. The configured AI gateway receives the complete selected resume and reviewed posting. **Compare saved resumes** explicitly queues one request per saved variant; only the intended variant's current result is attached. Preferences remain separate from experience fit and default to UNKNOWN. Changed posting, resume, preferences, model or prompt version invalidates current results and prepared requests. Failed attempts preserve matching successes; interrupted work resumes only on your click with a panel open.
+
+**Production uploads are disabled.** Local testing accepts only loopback tracker origins and a separate tracker credential. Freeze the reviewed prepared request, then explicitly send it. Retries retain the exact request and never rerun AI. Existing server-side role fitting and Gemini import remain available independently. This moves AI orchestration to the extension, not model inference to your computer; database storage and transfer remain, and returning to Neon's free tier requires measured usage. See [role-fit workflow, delivery behavior and interoperability evidence](docs/extension-role-fit.md).
 
 ## AI and token use
 
@@ -30,7 +46,7 @@ The tool fills one open application page at a time. Instant, Quick and Gentle ty
 
 ## Storage and page support
 
-Data is stored in `chrome.storage.local` in this browser profile, with content-script storage access disabled. There is no app backend, account system, telemetry, or cloud sync. The gateway key is stored locally without application-level encryption. AI requests send the stated context to your configured gateway. Files are attached only when you approve filling a recognized resume/CV upload field.
+Data is stored in `chrome.storage.local` in this browser profile, with content-script storage access disabled. There is no extension backend, telemetry or cloud sync. Gateway and tracker keys are stored separately, without application-level encryption. Assessment jobs retain their input snapshots, including resume text, locally. Explicit AI requests send the stated context to your configured gateway. Local tracker delivery sends the posting, source evidence and selected result with resume digests; it excludes full resumes, profile, other variants, gateway credentials and prompts. Files are attached to job sites only when you approve filling a recognized resume/CV upload field. **Delete all local data** removes assessments, preferences, connection credentials and frozen deliveries too.
 
 The extension has HTTP/HTTPS host access so it can reach your gateway and scan/fill job forms including cross-origin iframes. Scripts run when you use the tool, not on every page load. Standard inputs, textareas, native selects, file fields, open shadow roots and accessible iframes are supported. Shopee careers custom dropdowns are also supported, including searchable virtual lists, phone country codes, education, schools, courses, skills, and source channels. Form labels outside the actual inputs are recognized. Closed shadow roots, other unsupported custom widgets, date pickers, consent, radio buttons and checkboxes require manual handling. Browser settings, Chrome Web Store and other restricted pages cannot be filled.
 
@@ -38,7 +54,7 @@ For a Shopee multi-select, put each option label on its own line in the answer b
 
 PDF text is extracted locally, as is DOCX text. Scanned/image-only PDFs need OCR first; use DOCX or paste text instead. Text-only resumes provide AI context but have no file to attach. Editing extracted text does not rewrite the original uploaded file.
 
-**Job Hunt integration:** visual styling, matching gateway defaults, and a link back to your tracker. This version does not write or sync application records to Job Hunt; its authenticated APIs have not been changed.
+**Job Hunt integration:** matching gateway defaults, offline v1 exports, direct gateway role fitting and authenticated import testing against a loopback tracker. Production tracker deployment/migrations and production delivery remain pending. Imported fits are saved by the tracker without fetching its resume or running AI again.
 
 ## Develop and verify
 
@@ -53,11 +69,18 @@ npx playwright install chromium
 npm run test:browser
 npm run test:dropdowns
 npm run test:fill
+npm run test:capture
+npm run test:tracker
+npm run test:role-fit
 ```
 
 The Vite web preview lets you work on resumes, profile, and settings. Its local data is separate from the extension's data. Page filling requires the installed extension. Never enter your real gateway key on a publicly hosted preview you do not control.
 
 `npm run test:browser` loads the actual built extension in Chromium against a local application fixture. It checks imports, persistence, AI drafting with a mocked gateway, caching, iframe/shadow fields, preserving existing answers, attaching files, stop/undo, and narrow-panel layout. It does not contact the live gateway or submit an application. After rebuilding, click **Reload** on the extension's card and reopen its panel.
+
+`npm test` includes offline serializer checks for source facts, review decisions, salary rules, CRLF requirement composition and UTF-8 payload limits. `npm run test:capture` checks capture, corrections, exports and offline preparation in the built extension, using saved posting fixtures with external requests blocked. Optional `npm run test:capture:live` reads the public samples listed in the [extraction report](docs/extraction-pilot.md); it is separate from offline checks and depends on those pages remaining available.
+
+`npm run test:tracker` uses actual routes from the sibling `../job-hunt` checkout with temporary isolated storage and loopback HTTP. `npm run test:role-fit` combines the built extension, mocked AI and the same local tracker harness. Both require the tracker checkout and its installed dependencies; neither uses its configured database or production credentials. Unit tests cover fit validation, queues, input bindings and delivery recovery/error cases.
 
 All AI answer flows include nearby employer/title context. Profile matching excludes fields identified as employer, school, reference or emergency-contact details. Each reviewed answer can reveal its original scanned value. Native fields are checked against length, type, pattern and range constraints before writing; after a fill, values are read back after a short settling period. Rejected answers are reported instead of counted as filled. This verifies browser field state, not server acceptance or changes that happen later. `npm run test:fill` checks asynchronous rejection, constraints, accepted values, Undo and per-field result statuses.
 
@@ -75,6 +98,11 @@ If you want a hosted UI preview, deploy this repository as a Vite static site: b
 - `src/core.js`: profile matching, gateway requests and response validation
 - `src/resume.js`: local PDF/DOCX/TXT extraction
 - `src/browser.js`: on-demand page execution
+- `src/posting-extractor.js`: posting text and structured-data extraction
+- `src/captures.js`, `src/capture-storage.js`, `src/capture-ui.js`: local capture review, validation and persistence
+- `src/capture-transport.js`, `src/capture-rules.js`: offline v1 request validation, source variants, salary units, composition and review bindings
+- `src/role-fit.js`, `src/role-fit-queue.js`, `src/capture-fit-ui.js`: full-input assessment, persisted queue and capture fit controls
+- `src/assessed-capture.js`, `src/capture-delivery.js`, `src/local-work-store.js`: selected-result attachment, frozen local test delivery and separate stores
 - `public/content.js`: scan, native field fill, file attachment, stop and undo
 - `public/manifest.json`: browser extension configuration
 - `tests/`: unit and installed-extension browser checks

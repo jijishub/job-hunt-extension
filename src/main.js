@@ -1,12 +1,22 @@
 import './style.css';
-import { defaults, profileFields, localAnswer, requestAI, validateAnswers, aiFieldData, answerCacheIdentity } from './core.js';
+import { defaults, profileFields, localAnswer, requestAI as requestGateway, validateAnswers, aiFieldData, answerCacheIdentity } from './core.js';
 import { load, save, isExtension } from './storage.js';
 import { readResume } from './resume.js';
 import { scanPage, runFrame } from './browser.js';
+import { CapturePanel } from './capture-ui.js';
+import { clearCaptures, loadCaptures } from './capture-storage.js';
+import { clearCaptureWork } from './capture-fit-ui.js';
+import { oneAtATime } from './local-work-store.js';
+import { canonicalJSON } from './canonical-json.js';
+
+const capturePanel = new CapturePanel();
+await capturePanel.load();
 
 let state = await load(), tab = 'fill', page = null, answers = [], busy = '', message = '', error = false, controller;
+capturePanel.configure({ getState: () => state, setSelected: async index => { state.selected = index; page = null; answers = []; await persist(); } });
 let repair = { key: '', prompt: '', ready: false };
 let general = { prompt: '', keys: [] };
+let storageRefreshPending = false;
 const app = document.querySelector('#app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const selectedResume = () => state.resumes[state.selected];
@@ -17,17 +27,32 @@ const fieldLabel = field => {
 };
 const icon = '<img class="flower" src="./flower.svg" alt="">';
 function notify(text, isError = false) { message = text; error = isError; render(); }
-async function persist() { await save(state); }
+async function persist() { capturePanel.transport.clear(); await save(state); }
+async function requestAI(...args) {
+  const result = await oneAtATime('job-hunt-role-fit', () => requestGateway(...args));
+  if (result === null) throw new Error('Another AI request is active. Wait for it to finish, then try again.');
+  return result;
+}
+async function refreshLocalState() {
+  const fresh = await load(), captures = await loadCaptures();
+  if (canonicalJSON(fresh) !== canonicalJSON(state) || canonicalJSON(captures) !== canonicalJSON(capturePanel.captures)) capturePanel.transport.clear();
+  state = fresh; capturePanel.captures = captures;
+  if (!captures.some(c => c.id === capturePanel.selected)) capturePanel.selected = captures[0]?.id || null;
+  const preferencesBefore = canonicalJSON(capturePanel.fit.preferences);
+  await capturePanel.fit.reload();
+  if (preferencesBefore !== canonicalJSON(capturePanel.fit.preferences)) capturePanel.transport.clear();
+  storageRefreshPending = false;
+}
 function render() {
   app.innerHTML = `
     <header><a class="brand" href="https://jobhunt.jizellecasia.site" target="_blank" rel="noreferrer">${icon}<span>job hunt<span class="brand-sub">YOUR APPLICATION SIDEKICK</span></span></a><span class="edition">FILL<br>EDITION</span></header>
     <main><div class="eyebrow"><span class="dot"></span> LESS ADMIN. MORE POSSIBILITIES.</div>
     <div class="hero"><h1>Big ambitions.<br><em>Less typing.</em></h1><span class="spark" aria-hidden="true">✳</span></div>
     <p class="intro">Your experience, on repeat.<br>The application paperwork? Handled.</p>
-    <nav aria-label="Workspace">${[['fill', '✦', 'Fill'], ['resumes', '▤', 'Resumes'], ['profile', '♡', 'Profile'], ['settings', '⚙', 'Settings']].map(([id, i, label]) => `<button data-tab="${id}" class="${tab === id ? 'active' : ''}" ${busy ? 'disabled' : ''}>${i} <span>${label}</span></button>`).join('')}</nav>
+    <nav aria-label="Workspace">${[['fill', '✦', 'Fill'], ['capture', '↗', 'Capture'], ['resumes', '▤', 'Resumes'], ['profile', '♡', 'Profile'], ['settings', '⚙', 'Settings']].map(([id, i, label]) => `<button data-tab="${id}" class="${tab === id ? 'active' : ''}" ${busy ? 'disabled' : ''}>${i} <span>${label}</span></button>`).join('')}</nav>
     ${message ? `<div class="notice ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">${esc(message)}</div>` : ''}
     ${!isExtension ? '<div class="preview-note">Browser preview · Resume and settings tools work here. Install the extension to fill application pages. Preview data stays separate.</div>' : ''}
-    ${tab === 'fill' ? fillView() : tab === 'resumes' ? resumeView() : tab === 'profile' ? profileView() : settingsView()}
+    ${tab === 'fill' ? fillView() : tab === 'capture' ? capturePanel.render(busy) : tab === 'resumes' ? resumeView() : tab === 'profile' ? profileView() : settingsView()}
     <footer><span>MADE FOR YOUR NEXT CHAPTER.</span><a href="https://jobhunt.jizellecasia.site" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></footer></main>`;
   bind();
 }
@@ -88,7 +113,7 @@ async function task(name, fn) {
   if (busy) return;
   busy = name; message = ''; error = false; render();
   try { await fn(); } catch (e) { message = e.name === 'AbortError' ? 'Stopped. Any fields already filled remain on the page; use Undo if needed.' : e.message; error = e.name !== 'AbortError'; }
-  finally { busy = ''; render(); }
+  finally { if (storageRefreshPending) await refreshLocalState(); busy = ''; render(); }
 }
 async function cacheKey(field) {
   const bytes = new TextEncoder().encode(answerCacheIdentity(field, page, state.profile, selectedResume()?.text, state.settings));
@@ -166,6 +191,7 @@ async function revisePage() {
   } finally { clearTimeout(timeout); controller = null; }
 }
 function bind() {
+  capturePanel.bind(app, task, render);
   const on = (selector, event, handler) => app.querySelector(selector)?.addEventListener(event, handler);
   app.querySelectorAll('[data-tab]').forEach(el => el.onclick = () => { tab = el.dataset.tab; message = ''; render(); });
   on('#resume-select', 'change', e => { state.selected = Number(e.target.value); page = null; answers = []; task('save', persist); });
@@ -247,6 +273,15 @@ function bind() {
     state.cache = {}; page = null; answers = []; await persist(); tab = 'profile'; message = 'Contact details extracted. Check them, then save your profile.';
   }));
   on('#clear-cache', 'click', () => task('save', async () => { state.cache = {}; await persist(); message = 'Saved AI answers cleared.'; }));
-  on('#reset', 'click', () => { if (confirm('Delete all three resumes, your profile, gateway key, and saved answers?')) task('save', async () => { state = structuredClone(defaults); page = null; answers = []; await persist(); message = 'All local data deleted.'; }); });
+  on('#reset', 'click', () => { if (confirm('Delete all resumes, profile, keys, answers, captures, assessments and frozen deliveries?')) task('save', async () => { await clearCaptures(); await clearCaptureWork(); capturePanel.reset(); state = structuredClone(defaults); page = null; answers = []; await persist(); message = 'All local data deleted.'; }); });
 }
+if (isExtension) chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'fit-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
+  if (busy) { storageRefreshPending = true; return; }
+  refreshLocalState().then(render).catch(e => notify(e.message, true));
+});
+else window.addEventListener('storage', () => {
+  if (busy) storageRefreshPending = true;
+  else refreshLocalState().then(render).catch(e => notify(e.message, true));
+});
 render();

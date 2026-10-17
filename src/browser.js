@@ -1,4 +1,13 @@
 import { isExtension } from './storage.js';
+import { extractPosting } from './posting-extractor.js';
+export async function capturePosting() {
+  const tab = await activePage();
+  const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPosting });
+  if (!result?.result) throw new Error('The page changed or could not be read. Open the full posting and try again.');
+  const current = await chrome.tabs.get(tab.id);
+  if (current.url !== result.result.page_url) throw new Error('The posting changed during capture. Capture it again.');
+  return result.result;
+}
 export async function activePage() {
   if (!isExtension) throw new Error('Page filling works in the installed extension. Load the build folder in chrome://extensions.');
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
