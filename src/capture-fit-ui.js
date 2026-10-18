@@ -107,6 +107,7 @@ export class CaptureFitPanel {
       }
       await this.reload();
       if (!this.jobs.some(j => this.matches(j, capture))) throw new Error('Assessment did not complete for the current inputs. The capture is still local. Review the assessment error, retry explicitly, or choose Save without assessment.');
+      this.refresh?.(); // Show the completed answer while tracker delivery is still running.
     }
     const prepared = await this.prepare(unassessed), frozen = await this.freezeCurrent(prepared, { origin: connection.origin, account_id: connection.account.id });
     return this.delivery.send(frozen.id);
@@ -142,7 +143,7 @@ export class CaptureFitPanel {
       ${!hasResume ? '<p class="hint">Add a resume in the Resumes tab to include a fit assessment.</p>' : ''}
       ${saved ? `<div class="capture-saved" role="status"><strong>✓ Saved to Job Hunt</strong><p>${esc(outcome(delivery))}</p><a href="${esc(delivery.origin)}" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></div>` : `<p class="hint">${delivery ? 'Continues the same saved request. No new AI call.' : 'Uses this resume to assess the fit, then saves the job and result.'}</p><button id="tracker-save" class="button primary full" ${busy || !canSave ? 'disabled' : ''}>${busy === 'deliver' ? 'Saving…' : saveLabel}</button>${delivery?.error ? `<p class="notice error">${esc(delivery.error)}</p>` : ''}${delivery?.next_retry_at && Date.now() < delivery.next_retry_at ? `<p class="hint">Try again after ${esc(new Date(delivery.next_retry_at).toLocaleTimeString())}.</p>` : ''}`}
       ${jobs[0]?.error && !current ? `<p class="fit-error notice error">${esc(jobs[0].error)}</p>` : ''}
-      ${current ? `<details class="fit-result"><summary>Experience fit: ${esc(({STRONG:'Strong',POSSIBLE:'Possible',WEAK:'Weak'})[current.result.fit] || current.result.fit)}</summary><p>${esc(current.result.explanation)}</p><h4>Strengths</h4><ul>${current.result.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><h4>Gaps</h4><ul>${current.result.gaps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p>Preferences: ${esc(current.result.preference_alignment)} ${esc(current.result.preference_notes)}</p><p class="hint">${esc(current.inputs.resume.label)} · ${esc(current.inputs.model)} · ${esc(current.analyzed_at)}</p></details>` : ''}
+      ${current ? `<section class="fit-result" aria-label="Role fit assessment"><h3>Role fit: ${esc(({STRONG:'Strong',POSSIBLE:'Possible',WEAK:'Weak'})[current.result.fit] || current.result.fit)}</h3><p class="hint">Based on ${esc(current.inputs.resume.label || 'your selected resume')}</p><p>${esc(current.result.explanation)}</p><h4>Strengths</h4>${current.result.strengths.length ? `<ul>${current.result.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>` : '<p>None identified.</p>'}<h4>Gaps</h4>${current.result.gaps.length ? `<ul>${current.result.gaps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>` : '<p>None identified.</p>'}<h4>Your preferences: ${esc(({ALIGNED:'Aligned',MIXED:'Mixed',MISALIGNED:'Not aligned',UNKNOWN:'Not assessed'})[current.result.preference_alignment])}</h4>${current.result.preference_notes ? `<p>${esc(current.result.preference_notes)}</p>` : ''}<details><summary>Assessment details</summary><p class="hint">${esc(current.inputs.model)} · ${esc(current.analyzed_at)}</p></details></section>` : ''}
       <details class="capture-other" ${this.preferenceDraft ? 'open' : ''}><summary>Other options</summary>
         ${!saved ? `<button id="tracker-save-unassessed" class="button secondary full" ${busy || !connected ? 'disabled' : ''}>Save without assessment</button><p class="hint">Saves the posting only, with any review warnings. A fit cannot be attached later through this import.</p>` : ''}
         <form id="fit-preferences-form"><label class="label" for="fit-preferences">Additional preference notes</label><textarea id="fit-preferences" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft ? this.preferenceDraftText : this.localPreferences?.notes || '')}</textarea><p class="hint">${c?.capabilities.preferences ? 'Adds to your saved Job Hunt preferences.' : 'Used when Job Hunt preferences are not shared.'} Blank is allowed.</p><button class="text-button" ${disabled}>Save notes</button></form>
@@ -155,6 +156,7 @@ export class CaptureFitPanel {
       </details></section>`;
   }
   bind(app, task, refresh) {
+    this.refresh = refresh;
     const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
     const perform = (name, fn) => task(name, async () => { try { await fn(); } finally { await this.reload(); } });
     on('#fit-resume', 'change', e => perform('save', () => this.runtime.setSelected(Number(e.target.value))));
