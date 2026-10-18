@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Jobs | LinkedIn</title>
+<!-- Synthetic authenticated split-pane layout. No live account was used. -->
+<aside class="jobs-search-results-list"><article data-job-id="999"><h2>Neighbor role</h2><div class="job-description">NEIGHBOR_CARD_REQUIREMENT</div></article><button id="select-b">Select job B</button><button id="select-c">Select job C without identity on its body</button><button id="stuck">Select a job whose old body never changes</button></aside>
+<main class="scaffold-layout__detail"><section class="jobs-details" data-job-id="111">
+  <div class="job-details-jobs-unified-top-card__job-title"><h1><a href="/jobs/view/111/">Selected Support Engineer</a></h1></div>
+  <div class="job-details-jobs-unified-top-card__company-name">Example A</div>
+  <div class="job-details-jobs-unified-top-card__primary-description-container"><span class="tvm__text--low-emphasis">Manila, Philippines</span></div>
+  <div class="job-details-jobs-unified-top-card__job-insight"><span>Hybrid</span><span>Full-time</span></div>
+  <div class="jobs-description"><div class="jobs-description__content"><div id="job-details" class="jobs-box__html-content" data-job-description-id="111"><h2>Responsibilities A</h2><p>INITIAL_A_ONLY_REQUIREMENT: build support tools with SQL and JavaScript.</p><h3>Qualifications A</h3><ul><li>Two years of support experience.</li><li>Strong written communication.</li></ul><div data-testid="premium-upsell">PREMIUM_PROMPT_REQUIREMENT</div><div data-ad>ADVERTISEMENT_REQUIREMENT</div></div></div></div>
+  <a id="apply" href="https://employer.example/apply">Apply</a>
+</section></main>
+<script type="application/ld+json">{"@type":"JobPosting","title":"Neighbor role","description":"NEIGHBOR_STRUCTURED_REQUIREMENT","hiringOrganization":{"name":"Unrelated employer"},"url":"https://www.linkedin.com/jobs/view/999/"}</script>
+<script>
+  const detail=document.querySelector('.jobs-details'), body=document.querySelector('#job-details'), heading=document.querySelector('.job-details-jobs-unified-top-card__job-title a');
+  const select=(id,title,company)=>{history.replaceState({},'',`/jobs/search/?currentJobId=${id}`);detail.dataset.jobId=id;heading.href=`/jobs/view/${id}/`;heading.textContent=title;document.querySelector('.job-details-jobs-unified-top-card__company-name').textContent=company;};
+  document.querySelector('#select-b').onclick=()=>{select('222','Selected Developer B','Example B');setTimeout(()=>{body.dataset.jobDescriptionId='222';body.innerHTML='<h2>Responsibilities B</h2><p>B_ONLY_REQUIREMENT: build and test web applications.</p><h3>Qualifications B</h3><ul><li>React and TypeScript experience.</li><li>Accessibility testing experience.</li></ul>';},600);};
+  document.querySelector('#select-c').onclick=()=>{select('333','Selected Developer C','Example C');body.removeAttribute('data-job-description-id');setTimeout(()=>{body.innerHTML='<h2>Requirements C</h2><ul><li>C_ONLY_REQUIREMENT: administer Linux production systems.</li><li>Understand network incident response and support.</li></ul>';},700);};
+  document.querySelector('#stuck').onclick=()=>{select('444','Selected Missing D','Example D');body.removeAttribute('data-job-description-id');};
+  document.querySelector('#apply').onclick=e=>{e.preventDefault();window.applied=true};
+</script>

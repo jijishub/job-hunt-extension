@@ -1,5 +1,7 @@
 # Extension role-fit pilot
 
+The later [LinkedIn/CGI capture update](linkedin-cgi-capture.md) adds selected-pane extraction and explicit completeness confirmation without changing assessment attachment or delivery restrictions.
+
 Implements the supplied extension-side pivot against the sibling tracker's `EXTENSION-CAPTURE-CONTRACT.md`, including its final reconciliation decisions and extension-generated assessment section, inspected on 2026-10-18. No tracker source is modified. Production deployment/migrations are pending and every tracker request is restricted in code to an HTTP/HTTPS loopback origin with no path, credentials, query or fragment. Redirects are rejected. Gateway traffic is separate and uses the configured provider normally.
 
 ## Workflow and data

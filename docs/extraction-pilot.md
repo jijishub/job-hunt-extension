@@ -2,6 +2,8 @@
 
 Historical phase report. Current explicit gateway assessment and local tracker testing are documented in [extension role fit](extension-role-fit.md). Production delivery remains disabled; the extraction evidence below does not establish additional platform compatibility.
 
+Subsequent LinkedIn/CGI adapters and the clearer completeness review flow are documented in [LinkedIn and CGI capture evidence](linkedin-cgi-capture.md). The initial adapter list and no-click behavior below describe the original phase.
+
 This records the initial extraction phase. The subsequent [offline transport pilot](offline-transport.md) supersedes the historical contract proposals below, records the final tracker v1 decisions, adds coded warnings/resolutions and local schema version 2, and still makes no uploads or automatic assessments.
 
 This phase adds local posting capture and review. It does not implement tracker authentication, uploads, assessment requests, queues, or a shared API contract. Form filling and the tracker/Gemini workflow remain available.

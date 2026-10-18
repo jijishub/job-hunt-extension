@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Loading selected job | LinkedIn</title>
+<!-- Synthetic delayed description. The search selection never opens another page. -->
+<main class="scaffold-layout__detail"><section class="jobs-details" data-job-id="555"><h1 class="job-details-jobs-unified-top-card__job-title"><a href="/jobs/view/555/">Loaded Engineer</a></h1><div class="job-details-jobs-unified-top-card__company-name">Loading Example</div><div class="jobs-description"><div id="job-details" aria-busy="true">Loading...</div></div><button id="finish-load" type="button">Finish loading</button></section></main>
+<script>document.querySelector('#finish-load').onclick=()=>setTimeout(()=>{const n=document.querySelector('#job-details');n.removeAttribute('aria-busy');n.innerHTML='<h2>Loaded requirements</h2><ul><li>LOADED_SELECTED_REQUIREMENT: build reliable software services.</li><li>SQL experience and clear communication.</li></ul>';},650);</script>

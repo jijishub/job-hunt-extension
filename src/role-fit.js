@@ -27,7 +27,7 @@ export function fitMessages(inputs) {
   return messages;
 }
 export async function makeFitInputs(capture, serialized, resume, preferences, settings) {
-  if (!serialized.assessment.eligible) throw new Error('Resolve the current capture review and identity blockers before assessing fit.');
+  if (!serialized.assessment.eligible) throw new Error('Assessment blocked: ' + serialized.assessment.reasons.join(', ') + '. Follow the capture review actions shown above.');
   nonblank(resume?.id, 100, 'Resume ID'); nonblank(resume?.text, Infinity, 'Resume text'); nonblank(settings.model, 100, 'Model');
   if (resume.label != null && (typeof resume.label !== 'string' || resume.label.length > 200)) throw new Error('Resume label must be at most 200 units.');
   gatewayURL(settings.baseUrl);

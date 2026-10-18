@@ -19,6 +19,22 @@ const valuesFor = capture => Object.fromEntries(captureFields.map(([key]) => [ke
 const reviewResolution = capture => ({ warning_id: captureWarnings(capture).find(w => w.code === 'requirements_unverified').id, action: 'verified_irrelevant', note: 'Compared the full posting and all requirements.' });
 const fails = async (capture, code) => assert.rejects(() => serializeCapture(capture), error => error.code === code);
 
+test('new adapters require an explicit current layout review even when a warning was omitted', async () => {
+  for (const adapter of ['linkedin-dom', 'cgi-njoyn-dom']) {
+    const capture = fixture(); capture.snapshot.candidates[0].adapter = adapter;
+    const reviewed = await correctCapture(capture, valuesFor(capture), true, [reviewResolution(capture)]);
+    assert.ok((await serializeCapture(reviewed)).assessment.reasons.includes('unverified_layout'));
+    const original = fixture(); original.snapshot.candidates[0].adapter = adapter;
+    original.snapshot.candidates[0].warnings.push({ code: 'unverified_layout', message: 'Compare this new layout with the intended job.' });
+    const warning = captureWarnings(original).find(w => w.code === 'unverified_layout');
+    const confirmed = await correctCapture(original, valuesFor(original), true, [reviewResolution(original), { warning_id: warning.id, action: 'verified_irrelevant', note: 'Checked job identity and all source sections against the intended posting.' }]);
+    const request = await serializeCapture(confirmed);
+    assert.equal(request.assessment.eligible, true);
+    assert.ok(request.payload.source.warnings.some(w => w.code === 'unverified_layout'));
+    assert.equal(confirmed.snapshot.candidates[0].source.rendered_text, original.snapshot.candidates[0].source.rendered_text);
+  }
+});
+
 test('offline projection allowlists data, preserves both originals, and uses exact request bytes', async () => {
   const capture = fixture({ both: true });
   capture.owner = 'private'; capture.posting.owner = 'private'; capture.posting.status = 'APPLIED';

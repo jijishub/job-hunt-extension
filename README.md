@@ -21,11 +21,13 @@ The tool fills one open application page at a time. Instant, Quick and Gentle ty
 
 ## Local posting capture pilot
 
-Open **Capture** in the side panel and click **Capture current posting** on an individual posting. The extension saves the extraction locally before showing a preview. Correct the fields, compare the requirements with the full posting, and click **Save corrections locally**. Unknown facts stay blank. A review mark records your check; it does not dismiss extraction warnings or trigger an assessment.
+Open **Capture** in the side panel and click **Capture current posting** on an individual posting or the selected job in LinkedIn search. The extension saves the extraction locally before showing a preview. Correct the fields and compare every requirement with the page and preserved sources. Check the completeness confirmation and click **Confirm requirements and save review** to record that decision. **Save corrections locally** remains available for partial review. Unknown facts stay blank. Assessment always requires a separate click.
 
 **Preserved source & provenance** keeps the original posting excerpts and field origins separate from corrections. When several postings are found, choose one explicitly. Changing an already selected opening creates a new capture and keeps the previous one. Saved captures can be reopened, deleted, or exported as local pilot JSON. Unsaved corrections survive switching panel tabs but require saving before closing the panel. **Delete all local data** also deletes captures.
 
-The initial adapters cover the sampled Greenhouse and Lever layouts, with a generic JobPosting JSON-LD reader and a cautious description-region fallback. This is not a claim of platform-wide compatibility. Application-only pages and unrelated pages are rejected when no posting content is found. Frames and closed shadow roots are not read; collapsed, conflicting, structured-only, short or truncated content remains flagged for review. No AI structuring is used in this pilot.
+Adapters cover sampled Greenhouse, Lever, LinkedIn detail/selected search pane, and CGI Njoyn posting layouts, with a generic JobPosting JSON-LD reader and a cautious description-region fallback. This is not a claim of platform-wide compatibility. LinkedIn capture waits briefly for the selected pane and may click its description expansion button; it never clicks Apply or opens an employer page. CGI capture preserves the full visible duties/qualifications alongside the shorter structured excerpt. See [verified evidence, fixtures and remaining limitations](docs/linkedin-cgi-capture.md). Application-only pages and unrelated pages are rejected when no posting content is found. Frames and closed shadow roots are not read; incomplete or conflicting text remains flagged. No AI structuring is used in extraction.
+
+**What still blocks assessment?** lists current blockers and their next actions. Informational unknowns, including missing work model, stay null/Unknown and need no correction. Original warnings remain visible with their saved resolution status. Completeness confirmation resolves the requirements review and the explicitly confirmed description choice; other conflicting fields still need their own decision and explanation. Editing facts invalidates the saved review, current fit and prepared request.
 
 **Capturing a page stays local.** It stores no pipeline status or candidate profile. Assessment and local test delivery each require a separate explicit action. Keep using the existing tracker/Gemini import workflow when extraction is incomplete. The exported local schema is not the tracker API contract. See [extraction evidence and limitations](docs/extraction-pilot.md).
 
@@ -72,6 +74,7 @@ npm run test:fill
 npm run test:capture
 npm run test:tracker
 npm run test:role-fit
+npm run test:postings
 ```
 
 The Vite web preview lets you work on resumes, profile, and settings. Its local data is separate from the extension's data. Page filling requires the installed extension. Never enter your real gateway key on a publicly hosted preview you do not control.
@@ -81,6 +84,8 @@ The Vite web preview lets you work on resumes, profile, and settings. Its local 
 `npm test` includes offline serializer checks for source facts, review decisions, salary rules, CRLF requirement composition and UTF-8 payload limits. `npm run test:capture` checks capture, corrections, exports and offline preparation in the built extension, using saved posting fixtures with external requests blocked. Optional `npm run test:capture:live` reads the public samples listed in the [extraction report](docs/extraction-pilot.md); it is separate from offline checks and depends on those pages remaining available.
 
 `npm run test:tracker` uses actual routes from the sibling `../job-hunt` checkout with temporary isolated storage and loopback HTTP. `npm run test:role-fit` combines the built extension, mocked AI and the same local tracker harness. Both require the tracker checkout and its installed dependencies; neither uses its configured database or production credentials. Unit tests cover fit validation, queues, input bindings and delivery recovery/error cases.
+
+`npm run test:postings` checks LinkedIn detail pages, delayed split-pane changes, collapsed/hidden descriptions, unavailable/loading text and CGI completeness review in the installed extension. It also validates the resulting CGI fit request against the isolated sibling tracker, so it requires that checkout and its dependencies. Optional `npm run test:postings:live` checks the supplied public LinkedIn page and fetches/replays CGI's current public response; no signed-in LinkedIn session is used. Live pages can redirect, change or present access challenges.
 
 All AI answer flows include nearby employer/title context. Profile matching excludes fields identified as employer, school, reference or emergency-contact details. Each reviewed answer can reveal its original scanned value. Native fields are checked against length, type, pattern and range constraints before writing; after a fill, values are read back after a short settling period. Rejected answers are reported instead of counted as filled. This verifies browser field state, not server acceptance or changes that happen later. `npm run test:fill` checks asynchronous rejection, constraints, accepted values, Undo and per-field result statuses.
 

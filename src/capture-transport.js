@@ -157,6 +157,7 @@ export async function serializeCapture(capture, { requestAssessment = false, ext
   if (!posting.company_name?.trim()) reasons.push('missing_company_name');
   if (!payload.review.reviewed_at) reasons.push('pilot_review_required');
   const resolved = new Set(resolutions.map(r => r.warning_id));
+  if (!['greenhouse-dom', 'lever-dom'].includes(candidate.adapter) && !warnings.some(w => ['unverified_layout', 'structured_only'].includes(w.code) && resolved.has(w.id))) reasons.push('unverified_layout');
   for (const warning of warnings) {
     // Original missing-identity warnings stay in the evidence, but supplying the
     // identity removes this current blocker without an acknowledgement action.

@@ -40,6 +40,7 @@ async function refreshLocalState() {
   if (!captures.some(c => c.id === capturePanel.selected)) capturePanel.selected = captures[0]?.id || null;
   const preferencesBefore = canonicalJSON(capturePanel.fit.preferences);
   await capturePanel.fit.reload();
+  await capturePanel.checkReadiness();
   if (preferencesBefore !== canonicalJSON(capturePanel.fit.preferences)) capturePanel.transport.clear();
   storageRefreshPending = false;
 }
@@ -113,7 +114,7 @@ async function task(name, fn) {
   if (busy) return;
   busy = name; message = ''; error = false; render();
   try { await fn(); } catch (e) { message = e.name === 'AbortError' ? 'Stopped. Any fields already filled remain on the page; use Undo if needed.' : e.message; error = e.name !== 'AbortError'; }
-  finally { if (storageRefreshPending) await refreshLocalState(); busy = ''; render(); }
+  finally { if (storageRefreshPending) await refreshLocalState(); await capturePanel.checkReadiness(); busy = ''; render(); }
 }
 async function cacheKey(field) {
   const bytes = new TextEncoder().encode(answerCacheIdentity(field, page, state.profile, selectedResume()?.text, state.settings));
