@@ -69,7 +69,7 @@ export class CapturePanel {
         : ['description', 'qualifications'].includes(key)
           ? `<textarea id="capture-${key}" name="${key}" rows="${key === 'description' ? 12 : 5}" maxlength="120000" ${disabled}>${esc(value)}</textarea>`
           : `<input id="capture-${key}" name="${key}" value="${esc(value)}" ${['salary_min', 'salary_max'].includes(key) ? 'type="number" min="0" step="any"' : ''} ${disabled}>`}
-        <p class="capture-provenance">${provenance ? esc(`${provenance.method}${provenance.locator ? ': ' + provenance.locator : ' correction'}`) : 'Not extracted · unknown'}</p>`;
+        ${provenance ? `<details class="capture-provenance"><summary>${provenance.method === 'user' ? 'Edited by you' : provenance.method === 'jsonld' ? 'Captured from structured posting data' : 'Captured from posting'} · source details</summary><p>${esc(`${provenance.method}${provenance.locator ? ': ' + provenance.locator : ' correction'}`)}</p></details>` : '<p class="capture-provenance">Not extracted · unknown</p>'}`;
     };
     return `<section class="card"><div class="section-head"><h2>Capture a posting</h2><span class="tag">LOCAL PILOT</span></div>
       <p class="hint">Open one full job posting, then capture it. Review the text against the page. Capturing stays local. Assessment and local tracker delivery each require a separate explicit action.</p>

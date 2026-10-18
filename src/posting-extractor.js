@@ -2,7 +2,7 @@
 // Reads the current document. LinkedIn capture may expand only its description
 // button and wait for the selected pane. Never follows Apply or calls an API.
 export async function extractPosting(options = {}) {
-  const version = 'posting-pilot-v6';
+  const version = 'posting-pilot-v7';
   const maxText = 120000;
   const warnings = [];
   const promotionalContent = '.jobs-premium-applicant-insights, .job-details-how-you-match, [data-testid="premium-upsell"], [data-ad], .ad-banner-container';
@@ -106,6 +106,34 @@ export async function extractPosting(options = {}) {
     const outermost = cards.filter(node => !cards.some(other => other !== node && other.contains(node)));
     return outermost.length === 1 ? outermost[0] : null;
   }
+  function titleFromHeader(header, expectedId) {
+    if (!header) return null;
+    const companies = new Set([...header.querySelectorAll('a[href*="/company/"]')].map(n => clean(n.textContent)));
+    const candidates = [...header.querySelectorAll('p,span,div,a,[data-testid="job-title"],[itemprop="title"]')].filter(node => {
+      const text = clean(node.textContent);
+      return usable(node) && !node.closest('a[href*="/company/"],button,nav,aside,[role="button"]') &&
+        !node.querySelector('p,div,h1,h2,h3,ul,ol,button,input') && text.length >= 3 && text.length <= 500 &&
+        !companies.has(text) && !model(text) && !jobType(text) && !/·/.test(text) &&
+        !/^(?:apply|save|saved|share|more|view job|view full job|show more|see more)$/i.test(text) &&
+        !/applicant|clicked apply|promoted by|responses managed|\bago\b|premium/i.test(text);
+    });
+    const explicit = candidates.filter(node => node.matches('[data-testid="job-title"],[itemprop="title"]') ||
+      node.matches('a[href]') && expectedId && jobId(node.href) === expectedId);
+    const unique = nodes => [...new Map(nodes.map(node => [clean(node.textContent), node])).values()];
+    const named = unique(explicit);
+    if (named.length === 1) return named[0];
+    if (named.length > 1) return null;
+    // New signed-in layouts render the role as a prominent paragraph/span.
+    // Use rendered hierarchy only inside the identified posting header, never
+    // a page-wide large-text search or text inferred from the description.
+    const prominent = unique(candidates.filter(node => Number.parseFloat(getComputedStyle(node).fontSize) >= 18 &&
+      !candidates.some(parent => parent !== node && parent.contains(node) && Number.parseFloat(getComputedStyle(parent).fontSize) >= Number.parseFloat(getComputedStyle(node).fontSize))));
+    prominent.sort((a,b) => Number.parseFloat(getComputedStyle(b).fontSize) - Number.parseFloat(getComputedStyle(a).fontSize));
+    if (!prominent.length) return null;
+    const size = Number.parseFloat(getComputedStyle(prominent[0]).fontSize);
+    if (prominent.filter(node => Math.abs(Number.parseFloat(getComputedStyle(node).fontSize) - size) < 1).length !== 1) return null;
+    return prominent[0];
+  }
   function linkedInContext() {
     const roots = [...document.querySelectorAll(paneSelector)].filter(visible);
     const expectedId = jobId(location.href);
@@ -129,7 +157,8 @@ export async function extractPosting(options = {}) {
         if (primary.length === 1) heading = primary[0];
       }
     }
-    const header = headerFor(heading, root, semantic.about);
+    let header = headerFor(heading, root, semantic.about);
+    if (!heading) { heading = titleFromHeader(header, expectedId); if (heading) header = headerFor(heading, root, semantic.about); }
     const link = heading?.matches('a[href]') ? heading : heading?.querySelector('a[href*="/jobs/view/"]');
     const rootId = root?.getAttribute('data-job-id') || root?.getAttribute('data-current-job-id') || root?.getAttribute('data-entity-urn')?.match(/jobPosting:(\d+)/)?.[1];
     const headerId = jobId(link?.href) || rootId || null, urlId = jobId(location.href);
@@ -139,7 +168,7 @@ export async function extractPosting(options = {}) {
     return { root, heading, header: header && !header.contains(body) ? header : null, body, about: semantic.about, id: urlId || headerId, headerId, urlId,
       descriptionId: body?.getAttribute('data-job-description-id') || body?.getAttribute('data-job-id'),
       mismatch: !!((urlId && headerId && urlId !== headerId) || (bodyId && (urlId || headerId) && bodyId !== (urlId || headerId))),
-      text: textOf(body), rawText: body?.textContent || '', title: clean(heading?.textContent || '') };
+      text: textOf(body), rawText: body?.textContent || '', title: clean(heading?.textContent || '').replace(/\s+/g,' ') };
   }
   let linkedIn = null, expansionAttempted = false, descriptionCollapsed = false;
   if (isLinkedIn) {

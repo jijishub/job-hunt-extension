@@ -14,6 +14,7 @@
     "test:role-fit": "node tests/role-fit-browser.mjs",
     "test:postings": "node tests/posting-adapters-browser.mjs",
     "test:postings:live": "node tests/posting-adapters-live.mjs",
+    "test:linkedin:live": "node tests/linkedin-current-live.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test:dropdowns": "node tests/dropdowns.mjs",
     "test:fill": "node tests/fill-verification.mjs",

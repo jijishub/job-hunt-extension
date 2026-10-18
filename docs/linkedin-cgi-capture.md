@@ -10,6 +10,18 @@ The supplied [CGI posting](https://cgi.njoyn.com/corp/xweb/xweb.asp?CLID=21001&p
 
 ## Selection, timing and evidence
 
+### Non-heading title and end-to-end acceptance follow-up (extractor v7)
+
+The next screenshots showed that v6 still saved job `4475427660` without its visible title. The v6 fixture explicitly expected that null title: it validated metadata recovery but did not establish a successful capture/review/assessment workflow for the user's visible title. That expectation is now replaced with a required full title, **Automation Support Engineer ( Remote | Philippines)**.
+
+V7 also reads explicit same-job title links/labelled title elements and a unique visually prominent paragraph/span within the selected posting header. It excludes company/action/metadata labels and other cards, combines inline title fragments, and normalizes title whitespace. Competing equally prominent titles remain unknown. It does not use page-wide large text, browser title or description text to invent a role title. Fields now show a concise source label with collapsed technical details, preserving full selectors in provenance and exports.
+
+The installed-extension regression requires the full non-heading title, company, country-only location, Remote/full-time labels, all fixture requirements, no separate qualifications editor, collapsed/expandable provenance, explicit completeness review, zero remaining local blockers, a selected-resume fit through a mocked gateway, and a completed request accepted by actual isolated tracker routes without a second AI call. The existing missing-title, ambiguous-title, split-pane, stale-body, changed-ID/header and CGI checks remain. Screenshots are written to ignored `artifacts/linkedin-reviewed-fields.png` and `artifacts/linkedin-reviewed-preview.png` and inspected visually.
+
+The supplied public posting was also readable through the web reader and confirmed the displayed title and requirement sections. The separate installed-extension live-browser check (`npm run test:linkedin:live`) encountered HTTP **429** before posting content became available; it failed and recorded that limitation in ignored `artifacts/linkedin-current-live.json`. No signed-in browser session is connected. Thus the current fixes have simulated signed-in browser coverage, not successful live signed-in verification, and are not presented as production-ready. No production upload or deployment was enabled.
+
+Completed v7 checks: production build, all 49 unit tests, installed capture, role-fit and final posting-adapter suites (including paragraph/span titles and local tracker acceptance for both LinkedIn and CGI). The preview screenshot was inspected. The public installed-extension live check remains failed/blocked by HTTP 429.
+
 ### Single description and explicit metadata follow-up (extractor v6)
 
 A screenshot of job `4475427660` showed explicit **Remote** and **Full-time** pills, a country-only location **Philippines**, and unknown preview fields. The signed-in DOM was not supplied. Code inspection identified two supported failure paths: metadata recognition depended on a recognized title, and the leaf reader omitted plain `div` labels or decorated labels such as `✓ Full-time`. A synthetic screenshot-based fixture now covers both cases. V6 scopes metadata to a single posting header card before **About the job**, independently of title recognition, excluding premium/recommendations and unrelated cards. It reads explicit leaf labels, strips leading check marks, and accepts a country-only location from its posting metadata row. Missing or conflicting work-model labels stay unknown; title/description mentions cannot supply the work model. The final save guard also checks the header text to reject changing metadata.
