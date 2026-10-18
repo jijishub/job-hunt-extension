@@ -1,5 +1,5 @@
 import { load } from './storage.js';
-import { loadCaptures } from './capture-storage.js';
+import { loadCaptures, captureWorkspaces } from './capture-storage.js';
 import { workStore } from './local-work-store.js';
 import { makeFitInputs, PROMPT_VERSION, canonicalJSON } from './role-fit.js';
 import { RoleFitQueue } from './role-fit-queue.js';
@@ -28,6 +28,7 @@ export class CaptureFitPanel {
   async load() { await this.queue.recover(); await this.delivery.recover(); await this.reload(); }
   async reload() {
     [this.jobs, this.deliveries, this.localPreferences, this.connection] = await Promise.all([this.queue.jobs(), this.delivery.records(), workStore.get('fit-preferences'), this.delivery.connection()]);
+    this.boundCaptureIds=new Set((await captureWorkspaces()).map(w=>w.capture_id).filter(Boolean));
     const snapshot=await this.preferenceSync.cached(this.connection);
     this.preferences=effectivePreferences(snapshot,this.localPreferences);
     this.preferenceSource=snapshot ? {origin:snapshot.origin,account_id:snapshot.account_id} : null;
@@ -118,8 +119,8 @@ export class CaptureFitPanel {
     const base = await serializeCapture(capture);
     if (record.guard.review_hash !== capture.review_basis_hash || JSON.stringify(base.payload) !== record.guard.capture_json) return false;
     if (record.guard.inputs) {
-      const state = await load();
-      if (record.guard.inputs.resume.id !== `resume-slot-${state.selected + 1}`) return false;
+      const workspace=(await captureWorkspaces()).find(w=>w.capture_id===record.id);
+      if(workspace?.resume_index != null && record.guard.inputs.resume.id !== `resume-slot-${workspace.resume_index + 1}`)return false;
       return (await this.resolve(record.guard.inputs)).binding_hash === record.guard.inputs.binding_hash;
     }
     return true;
@@ -152,7 +153,7 @@ export class CaptureFitPanel {
         ${this.jobs.some(j=>['queued','interrupted'].includes(j.state)) ? `<button id="fit-resume-jobs" class="text-button" ${disabled}>Resume pending assessments</button>` : ''}
         ${jobs.length ? `<details><summary>Assessment history (${jobs.length})</summary>${jobs.map(j=>`<p data-fit-job="${esc(j.id)}">${esc(j.inputs.resume.label)}: ${esc(j.state)}${j.result ? ' · '+esc(j.result.fit) : ''}<br>${esc(j.error || j.analyzed_at || j.created_at)}</p>`).join('')}</details>` : ''}
         <details><summary>Advanced delivery</summary><button id="fit-unassessed" class="text-button" ${disabled}>Prepare as Unassessed</button><button id="tracker-freeze" class="text-button" ${disabled}>Freeze prepared request</button>
-        ${this.deliveries.map(r=>`<article><h3>${r.state === 'delivered' ? 'Saved to Job Hunt' : 'Delivery: '+esc(r.state)}</h3><p>${esc(r.origin)} · ${esc(r.id)} · ${esc(r.state)}</p><p>${esc(r.error || '')}</p>${r.validation ? `<pre>${esc(JSON.stringify(r.validation,null,2))}</pre>` : ''}${r.receipt ? `<p>${esc(outcome(r))}</p>` : `<button data-delivery-send="${esc(r.id)}" class="text-button" ${disabled}>Retry / check delivery</button>`}<details><summary>Request and receipt</summary><pre>${esc(r.body)}</pre><pre>${esc(JSON.stringify(r.receipt,null,2))}</pre></details></article>`).join('')}</details>
+        ${this.deliveries.filter(r=>r.id===capture.id || !this.boundCaptureIds?.has(r.id)).map(r=>`<article><h3>${r.state === 'delivered' ? 'Saved to Job Hunt' : 'Delivery: '+esc(r.state)}</h3><p>${esc(r.origin)} · ${esc(r.id)} · ${esc(r.state)}</p><p>${esc(r.error || '')}</p>${r.validation ? `<pre>${esc(JSON.stringify(r.validation,null,2))}</pre>` : ''}${r.receipt ? `<p>${esc(outcome(r))}</p>` : `<button data-delivery-send="${esc(r.id)}" class="text-button" ${disabled}>Retry / check delivery</button>`}<details><summary>Request and receipt</summary><pre>${esc(r.body)}</pre><pre>${esc(JSON.stringify(r.receipt,null,2))}</pre></details></article>`).join('')}</details>
       </details></section>`;
   }
   bind(app, task, refresh) {

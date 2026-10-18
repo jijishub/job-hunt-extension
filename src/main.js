@@ -4,19 +4,26 @@ import { load, save, isExtension } from './storage.js';
 import { readResume } from './resume.js';
 import { scanPage, runFrame } from './browser.js';
 import { CapturePanel } from './capture-ui.js';
-import { clearCaptures, loadCaptures, activeCaptureId } from './capture-storage.js';
+import { clearCaptures, loadCaptures, activeCaptureId, captureWorkspace, cleanupCaptureTabs } from './capture-storage.js';
 import { clearCaptureWork } from './capture-fit-ui.js';
 import { oneAtATime } from './local-work-store.js';
 import { canonicalJSON } from './canonical-json.js';
 
 const capturePanel = new CapturePanel();
-await capturePanel.load();
+const [initialBrowserTab] = isExtension ? await chrome.tabs.query({active:true,currentWindow:true}) : [{id:'preview',url:null}];
+let activeBrowserTab = initialBrowserTab || {id:'preview',url:null};
+const captureWindowId = activeBrowserTab.windowId;
+await capturePanel.load(activeBrowserTab);
 
 let state = await load(), tab = 'fill', page = null, answers = [], busy = '', message = '', error = false, controller;
-capturePanel.configure({ getState: () => state, setSelected: async index => { state.selected = index; page = null; answers = []; await persist(); } });
+capturePanel.configure({ getState: () => ({...state,selected:capturePanel.resumeIndex ?? state.selected}), setSelected: index => capturePanel.selectResume(index) });
+if(capturePanel.resumeIndex===null)await capturePanel.selectResume(state.selected);
+// Closed tabs and browser restarts release ordinary local work; frozen requests survive.
+await cleanupCaptureTabs().catch(()=>{});
 let repair = { key: '', prompt: '', ready: false };
 let general = { prompt: '', keys: [] };
 let storageRefreshPending = false;
+let pendingCaptureTab = null;
 const app = document.querySelector('#app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const selectedResume = () => state.resumes[state.selected];
@@ -37,7 +44,9 @@ async function refreshLocalState() {
   const fresh = await load(), captures = await loadCaptures();
   if (canonicalJSON(fresh) !== canonicalJSON(state) || canonicalJSON(captures) !== canonicalJSON(capturePanel.captures)) capturePanel.transport.clear();
   state = fresh; capturePanel.captures = captures;
-  capturePanel.selected = await activeCaptureId(captures);
+  for(const id of capturePanel.drafts.keys())if(!captures.some(c=>c.id===id))capturePanel.drafts.delete(id);
+  capturePanel.selected = await activeCaptureId(captures,capturePanel.tabId,capturePanel.tabUrl);
+  capturePanel.resumeIndex=(await captureWorkspace(capturePanel.tabId))?.resume_index ?? state.selected;
   const preferencesBefore = canonicalJSON(capturePanel.fit.preferences);
   await capturePanel.fit.reload();
   await capturePanel.checkReadiness();
@@ -53,7 +62,7 @@ function render() {
     <nav aria-label="Workspace">${[['fill', '✦', 'Fill'], ['capture', '↗', 'Capture'], ['resumes', '▤', 'Resumes'], ['profile', '♡', 'Profile'], ['settings', '⚙', 'Settings']].map(([id, i, label]) => `<button data-tab="${id}" class="${tab === id ? 'active' : ''}" ${busy ? 'disabled' : ''}>${i} <span>${label}</span></button>`).join('')}</nav>
     ${message ? `<div class="notice ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">${esc(message)}</div>` : ''}
     ${!isExtension ? '<div class="preview-note">Browser preview · Resume and settings tools work here. Install the extension to fill application pages. Preview data stays separate.</div>' : ''}
-    ${tab === 'fill' ? fillView() : tab === 'capture' ? capturePanel.render(busy) : tab === 'resumes' ? resumeView() : tab === 'profile' ? profileView() : settingsView()}
+    ${tab === 'fill' ? fillView() : tab === 'capture' ? pendingCaptureTab ? '<section class="card" role="status"><p>Switching to this tab’s posting…</p><p class="hint">Any action already started will finish for its original job.</p></section>' : capturePanel.render(busy) : tab === 'resumes' ? resumeView() : tab === 'profile' ? profileView() : settingsView()}
     <footer><span>MADE FOR YOUR NEXT CHAPTER.</span><a href="https://jobhunt.jizellecasia.site" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></footer></main>`;
   bind();
   capturePanel.fit.setLiveActive(tab === 'capture' && document.visibilityState === 'visible');
@@ -115,7 +124,22 @@ async function task(name, fn) {
   if (busy) return;
   busy = name; message = ''; error = false; render();
   try { await fn(); } catch (e) { message = e.name === 'AbortError' ? 'Stopped. Any fields already filled remain on the page; use Undo if needed.' : e.message; error = e.name !== 'AbortError'; }
-  finally { if (storageRefreshPending) await refreshLocalState(); await capturePanel.checkReadiness(); busy = ''; render(); }
+  finally {
+    try {
+      while(pendingCaptureTab){
+        const context=pendingCaptureTab;pendingCaptureTab=null;
+        await capturePanel.switchTab(context);
+        if(capturePanel.resumeIndex===null)await capturePanel.selectResume(state.selected);
+        page=null;answers=[];message='';
+      }
+      if (storageRefreshPending) await refreshLocalState();
+      await cleanupCaptureTabs().catch(()=>{});
+      if (storageRefreshPending) await refreshLocalState();
+      await capturePanel.checkReadiness();
+    } catch(e) {message=e.message;error=true;}
+    busy = ''; render();
+    if(pendingCaptureTab)queueMicrotask(()=>task('switch-tab',async()=>{}));
+  }
 }
 async function cacheKey(field) {
   const bytes = new TextEncoder().encode(answerCacheIdentity(field, page, state.profile, selectedResume()?.text, state.settings));
@@ -278,18 +302,37 @@ function bind() {
   on('#reset', 'click', () => { if (confirm('Delete all resumes, profile, keys, answers, captures, assessments and frozen deliveries?')) task('save', async () => { await clearCaptures(); await clearCaptureWork(); capturePanel.reset(); state = structuredClone(defaults); page = null; answers = []; await persist(); message = 'All local data deleted.'; }); });
 }
 if (isExtension) chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'capture-active-id' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
+  const workspaceChange=area==='session' && Object.keys(changes).some(k=>k.startsWith('capture-tab:'));
+  if (!workspaceChange && (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'capture-active-id' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k)))) return;
   if(changes['tracker-connection'])capturePanel.fit.setLiveActive(false);
   const prefChange=changes['tracker-preferences'];
   if(prefChange && (prefChange.oldValue?.preferences_hash !== prefChange.newValue?.preferences_hash || prefChange.oldValue?.origin !== prefChange.newValue?.origin || prefChange.oldValue?.account_id !== prefChange.newValue?.account_id)) {capturePanel.transport.clear();app.querySelector('.capture-transport')?.remove();app.querySelector('.fit-result')?.remove();}
   if (busy) { storageRefreshPending = true; return; }
-  if(tab === 'capture' && document.activeElement?.matches('input,textarea,select') && (capturePanel.drafts.has(capturePanel.selected) || capturePanel.fit.preferenceDraft)) {storageRefreshPending=true;return;}
+  const currentWorkspaceChanged=workspaceChange && changes['capture-tab:'+capturePanel.tabId]?.oldValue?.capture_id !== changes['capture-tab:'+capturePanel.tabId]?.newValue?.capture_id;
+  if(!currentWorkspaceChanged && tab === 'capture' && document.activeElement?.matches('input,textarea,select') && (capturePanel.drafts.has(capturePanel.selected) || capturePanel.fit.preferenceDraft)) {storageRefreshPending=true;return;}
   refreshLocalState().then(render).catch(e => notify(e.message, true));
 });
 else window.addEventListener('storage', () => {
   if (busy) storageRefreshPending = true;
   else refreshLocalState().then(render).catch(e => notify(e.message, true));
 });
+
+if(isExtension){
+  let activationRequest=0;
+  const followActiveTab=async()=>{
+    const request=++activationRequest;
+    const [context]=await chrome.tabs.query({active:true,windowId:captureWindowId});
+    if(request!==activationRequest || !context)return;
+    activeBrowserTab=context;pendingCaptureTab=context;storageRefreshPending=true;
+    if(busy){render();return;}
+    await task('switch-tab',async()=>{});
+  };
+  const follow=()=>followActiveTab().catch(e=>notify(e.message,true));
+  chrome.tabs.onActivated.addListener(info=>{if(info.windowId===captureWindowId)follow();});
+  chrome.tabs.onUpdated.addListener((id,change)=>{if(id===activeBrowserTab.id && (change.url || change.status==='complete'))follow();});
+  chrome.tabs.onRemoved.addListener((id,info)=>{if(info.windowId===captureWindowId)follow();});
+  follow(); // Catch activation/navigation that happened during panel initialization.
+}
 document.addEventListener('visibilitychange',()=>capturePanel.fit.setLiveActive(tab === 'capture' && document.visibilityState === 'visible'));
 window.addEventListener('pagehide',()=>capturePanel.fit.setLiveActive(false));
 render();

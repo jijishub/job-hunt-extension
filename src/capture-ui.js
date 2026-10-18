@@ -2,13 +2,17 @@ import { capturePosting } from './browser.js';
 import { captureFields, captureWarnings, createCapture, correctCapture, selectCandidate, resolutionActions } from './captures.js';
 import { serializeCapture } from './capture-transport.js';
 import { composeRequirements, sourceVariants, normalizeSalaryPeriod, INFORMATIONAL_WARNINGS } from './capture-rules.js';
-import { loadCaptures, saveCapture, startCapture, clearCaptures, activeCaptureId, withCaptureWorkIdle } from './capture-storage.js';
+import { loadCaptures, saveCapture, startCapture, clearCaptures, activeCaptureId, withCaptureWorkIdle, captureWorkspace, updateCaptureWorkspace } from './capture-storage.js';
 import { CaptureFitPanel, clearCaptureRecords } from './capture-fit-ui.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export class CapturePanel {
   captures = [];
   selected = null;
+  tabId = 'preview';
+  tabUrl = null;
+  resumeIndex = null;
+  tabDiagnostics = new Map();
   drafts = new Map();
   transport = new Map();
   readiness = new Map();
@@ -16,7 +20,18 @@ export class CapturePanel {
   diagnosticsCopied = false;
   fit = new CaptureFitPanel(this);
   configure(runtime) { this.fit.runtime = runtime; }
-  async load() { this.captures = await loadCaptures(); this.selected = await activeCaptureId(this.captures); await this.fit.load(); await this.checkReadiness(); }
+  async load(context = {}) { await this.switchTab(context); await this.fit.load(); }
+  async switchTab({id = 'preview',url = null} = {}) {
+    this.tabDiagnostics.set(this.tabId,{failure:this.lastCaptureFailure,copied:this.diagnosticsCopied});
+    this.tabId=id; this.tabUrl=url;
+    this.captures=await loadCaptures();
+    this.selected=await activeCaptureId(this.captures,id,url);
+    this.resumeIndex=(await captureWorkspace(id))?.resume_index ?? null;
+    const diagnostics=this.tabDiagnostics.get(id);
+    this.lastCaptureFailure=diagnostics?.failure || null;this.diagnosticsCopied=diagnostics?.copied || false;
+    await this.checkReadiness();
+  }
+  async selectResume(index) { await updateCaptureWorkspace(this.tabId,{resume_index:index});this.resumeIndex=index;this.transport.clear(); }
   async checkReadiness() {
     const c = this.current;
     if (!c) return;
@@ -24,7 +39,7 @@ export class CapturePanel {
     catch (e) { this.readiness.set(c.id, { eligible: false, reasons: [e.code || 'invalid_capture'], message: e.message }); }
   }
   get current() { return this.captures.find(c => c.id === this.selected); }
-  reset() { this.fit.setLiveActive(false); this.captures = []; this.selected = null; this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.localPreferences = null; this.fit.preferenceSource = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
+  reset() { this.fit.setLiveActive(false); this.captures = []; this.selected = null; this.resumeIndex=null;this.tabDiagnostics.clear();this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.localPreferences = null; this.fit.preferenceSource = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
   render(busy) {
     const capture = this.current, candidate = capture?.snapshot.candidates[capture.candidate_index];
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;
@@ -80,9 +95,9 @@ export class CapturePanel {
     return `<section class="card"><div class="section-head"><span class="step">1</span><h2>Capture</h2></div>
       <button id="capture-posting" class="button ${capture ? 'secondary' : 'primary'} full" ${disabled}>${busy === 'capture' ? 'Capturing…' : capture ? 'Capture this page again' : 'Capture current job'}</button>
       ${this.lastCaptureFailure ? `<div class="capture-diagnostics"><p class="hint">No capture was saved for this attempt. Diagnostics contain job ID, recognition flags and character counts. They exclude description text, resumes, profile and credentials.</p><div class="button-row"><button id="capture-diagnostics-copy" class="text-button" ${disabled}>${this.diagnosticsCopied ? 'Diagnostics copied' : 'Copy capture diagnostics'}</button><button id="capture-diagnostics-export" class="text-button" ${disabled}>Download diagnostics</button></div><details><summary>Recognition diagnostics</summary><pre>${esc(JSON.stringify(this.lastCaptureFailure, null, 2))}</pre></details></div>` : ''}
-      <p class="hint">Capturing another job replaces this posting. Nothing uploads until you save to Job Hunt.</p>
+      <p class="hint">This tab has its own posting and assessment. Nothing uploads until you save to Job Hunt.</p>
       <button id="capture-clear" class="button secondary full danger" ${disabled} ${this.captures.length || this.fit.jobs.length || this.fit.deliveries.length || this.lastCaptureFailure ? '' : 'disabled'}>Clear capture data</button>
-      <p class="hint">Clears local postings, fit results and pending deliveries. Keeps resumes, settings and Job Hunt records.</p></section>
+      <p class="hint">Clears capture data in all tabs, including pending deliveries. Keeps resumes, settings and Job Hunt records.</p></section>
       ${capture ? `<section class="card capture-preview"><div class="section-head"><span class="step">2</span><h2>Review posting</h2></div>
       <p class="capture-status">${draft ? 'Unsaved changes' : capture.reviewed_at && capture.review_basis_hash ? 'Reviewed' : 'Check the details below'}</p>
       ${readinessHTML}
@@ -106,15 +121,16 @@ export class CapturePanel {
     const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
     on('#capture-posting', 'click', () => task('capture', async () => {
       this.lastCaptureFailure = null; this.diagnosticsCopied = false;
-      const snapshot = await capturePosting();
+      const snapshot = await capturePosting(typeof this.tabId === 'number' ? this.tabId : undefined);
       if (!snapshot.candidates.length) {
         this.lastCaptureFailure = snapshot.diagnostics || null;
         throw new Error(snapshot.warnings.map(w => typeof w === 'string' ? w : w.message).join(' '));
       }
       const capture = createCapture(snapshot);
-      await startCapture(capture);
+      const previousId=this.selected;
+      await startCapture(capture,this.tabId);
       this.captures = await loadCaptures(); this.selected = capture.id;
-      this.drafts.clear(); this.transport.clear(); this.readiness.clear();
+      this.drafts.delete(previousId); this.transport.delete(previousId); this.readiness.delete(previousId);
       await this.fit.reload();
     }));
     on('#capture-clear', 'click', () => task('save', async () => {
@@ -122,6 +138,7 @@ export class CapturePanel {
       this.captures = []; this.selected = null;
       this.drafts.clear(); this.transport.clear(); this.readiness.clear();
       this.lastCaptureFailure = null; this.diagnosticsCopied = false;
+      this.tabDiagnostics.clear();
       await this.fit.reload();
     }));
     on('#capture-candidate', 'change', e => {
@@ -131,7 +148,7 @@ export class CapturePanel {
       const capture = selectCandidate(current, index);
       task('save', async () => {
         if (capture.id === current.id) await saveCapture(capture);
-        else await startCapture(capture);
+        else await startCapture(capture,this.tabId);
         if (capture.id === current.id) { this.captures[this.captures.indexOf(current)] = capture; this.drafts.delete(current.id); }
         else this.captures = await loadCaptures();
         this.selected = capture.id;

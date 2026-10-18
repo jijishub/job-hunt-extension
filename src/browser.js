@@ -1,7 +1,8 @@
 import { isExtension } from './storage.js';
 import { extractPosting } from './posting-extractor.js';
-export async function capturePosting() {
+export async function capturePosting(expectedTabId) {
   const tab = await activePage();
+  if (expectedTabId != null && tab.id !== expectedTabId) throw new Error('The active tab changed. Capture again from this tab.');
   const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPosting });
   if (!result?.result) throw new Error('The page changed or could not be read. Open the full posting and try again.');
   const current = await chrome.tabs.get(tab.id);
