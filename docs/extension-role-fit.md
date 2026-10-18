@@ -2,6 +2,8 @@
 
 ## Production integration update
 
+Live Job Hunt preference snapshots/events are now consumed by the extension; see [pairing, lifecycle, hashing and delivery rules](live-preferences.md). The historical manual-notes-only behavior below still applies when the connected credential does not share preferences.
+
 The owner has now authorized production integration. `capture-delivery.js` allows only `https://jobhunt.jizellecasia.site` and loopback development origins, rejects redirects and foreign origins, and consumes the tracker's authoritative `expires_at`. Production connection requires that expiry field. Historical loopback-only descriptions below refer to the earlier pilot.
 
 The Capture panel now offers scoped credential connection, **Assess & save to Job Hunt** (reuse a current fit or assess once), **Save posting + fit to Job Hunt**, **Save without assessment**, immutable delivery continuation and explicit receipts. Single-action saving binds the initially connected account/origin through preparation; changes pause delivery. Existing results/inputs/evidence remain local until the user saves. An existing frozen request is continued before any AI work. No-fit saves preserve warning state and cannot later be silently upgraded under the same UUID.

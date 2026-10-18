@@ -6,44 +6,63 @@ import { RoleFitQueue } from './role-fit-queue.js';
 import { CaptureDelivery, JOB_HUNT_ORIGIN } from './capture-delivery.js';
 import { serializeCapture } from './capture-transport.js';
 import { serializeAssessedCapture } from './assessed-capture.js';
+import { TrackerPreferences, effectivePreferences } from './tracker-preferences.js';
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const resumeFor = (state, index) => ({ id: `resume-slot-${index + 1}`, label: state.resumes[index]?.name ?? null, text: state.resumes[index]?.text });
 export async function clearCaptureWork() {
   for (const prefix of ['fit-job:', 'capture-delivery:']) for (const record of await workStore.list(prefix)) await workStore.remove(prefix + record.id);
-  await workStore.remove('fit-preferences'); await workStore.remove('tracker-connection');
+  await workStore.remove('fit-preferences'); await workStore.remove('tracker-preferences'); await workStore.remove('tracker-connection');
 }
 export class CaptureFitPanel {
-  jobs = []; deliveries = []; preferences = null; connection = null;
+  jobs = []; deliveries = []; preferences = null; localPreferences = null; preferenceSource = null; connection = null;
   constructor(owner) {
     this.owner = owner;
     this.queue = new RoleFitQueue({ resolveInputs: inputs => this.resolve(inputs), getSettings: async () => (await load()).settings });
     this.delivery = new CaptureDelivery({ guard: record => this.deliveryGuard(record) });
+    this.preferenceSync = new TrackerPreferences({delivery:this.delivery,onStatus:()=>{const label=globalThis.document?.querySelector('.preference-live-status');if(label)label.textContent=this.preferenceStatus()}});
   }
   async load() { await this.queue.recover(); await this.delivery.recover(); await this.reload(); }
   async reload() {
-    [this.jobs, this.deliveries, this.preferences, this.connection] = await Promise.all([this.queue.jobs(), this.delivery.records(), workStore.get('fit-preferences'), this.delivery.connection()]);
-    this.preferences ??= null;
+    [this.jobs, this.deliveries, this.localPreferences, this.connection] = await Promise.all([this.queue.jobs(), this.delivery.records(), workStore.get('fit-preferences'), this.delivery.connection()]);
+    const snapshot=await this.preferenceSync.cached(this.connection);
+    this.preferences=effectivePreferences(snapshot,this.localPreferences);
+    this.preferenceSource=snapshot ? {origin:snapshot.origin,account_id:snapshot.account_id} : null;
+  }
+  setLiveActive(active) { this.preferenceSync.setActive(active,this.connection); }
+  preferenceStatus() {
+    if(!this.connection?.capabilities.preferences)return 'Preferences not shared. Enable sharing on a new Job Hunt credential.';
+    const state=this.preferenceSync.status;
+    return ({live:'Job Hunt preferences: live',shared:'Job Hunt preferences: live in another panel',connecting:'Connecting preference updates…',reconnecting:'Preference updates reconnecting…',reconnect:'Reconnect Job Hunt to restore preference updates',error:'Preference updates unavailable'})[state] || 'Job Hunt preferences sync before assessment';
+  }
+  async preferenceContext(fresh = true) {
+    const c=await this.delivery.connection(), local=await workStore.get('fit-preferences');
+    const snapshot=c?.capabilities.preferences === true ? fresh ? await this.preferenceSync.fresh(c) : await this.preferenceSync.cached(c) : null;
+    const source=snapshot ? {origin:snapshot.origin,account_id:snapshot.account_id} : null;
+    return {preferences:effectivePreferences(snapshot,local),source};
   }
   async resolve(previous) {
     const state = await load(), capture = (await loadCaptures()).find(c => c.id === previous.capture_id);
     if (!capture || this.preferenceDraft || this.owner.drafts.has(capture.id)) throw new Error('Save current capture review/preferences first.');
     const index = Number(previous.resume.id.replace('resume-slot-', '')) - 1;
-    return makeFitInputs(capture, await serializeCapture(capture), resumeFor(state, index), await workStore.get('fit-preferences'), state.settings);
+    const context=await this.preferenceContext();
+    return makeFitInputs(capture, await serializeCapture(capture), resumeFor(state, index), context.preferences, state.settings, context.source);
   }
   async inputs(index = this.runtime.getState().selected) {
     const capture = this.owner.current;
     if (!capture || this.owner.drafts.has(capture.id)) throw new Error('Save corrections and current review first.');
     const state = await load(), saved = (await loadCaptures()).find(c => c.id === capture.id);
     if (!saved || canonicalJSON(saved) !== canonicalJSON(capture)) throw new Error('The capture changed in another panel. Reopen the panel before proceeding.');
-    return makeFitInputs(capture, await serializeCapture(capture), resumeFor(state, index), await workStore.get('fit-preferences'), state.settings);
+    const context=await this.preferenceContext();this.preferences=context.preferences;this.preferenceSource=context.source;
+    return makeFitInputs(capture, await serializeCapture(capture), resumeFor(state, index), context.preferences, state.settings, context.source);
   }
   matches(job, capture) {
     if (!this.runtime || !capture || this.preferenceDraft || this.owner.drafts.has(capture.id)) return false;
+    if(this.connection?.capabilities.preferences === true && !this.preferenceSource)return false;
     const s = this.runtime.getState(), r = resumeFor(s, s.selected), i = job.inputs;
     return job.state === 'succeeded' && i.capture_id === capture.id && i.review_hash === capture.review_basis_hash &&
       i.resume.id === r.id && i.resume.text === r.text && i.resume.label === r.label && i.model === s.settings.model &&
-      i.baseUrl === s.settings.baseUrl && i.prompt_version === PROMPT_VERSION && JSON.stringify(i.preferences) === JSON.stringify(this.preferences);
+      i.baseUrl === s.settings.baseUrl && i.prompt_version === PROMPT_VERSION && canonicalJSON(i.preferences) === canonicalJSON(this.preferences) && canonicalJSON(i.preference_source || null) === canonicalJSON(this.preferenceSource);
   }
   async prepare(unassessed = false) {
     const c = this.owner.current;
@@ -116,13 +135,14 @@ export class CaptureFitPanel {
     return `<section class="card capture-fit capture-deliveries"><div class="section-head"><span class="step">3</span><h2>Save to Job Hunt</h2></div>
       ${connected ? `<p class="connection-status">✓ Connected as ${esc(c.account.email)}</p><details><summary>Manage connection</summary>${connectionForm}</details>` : `<div class="capture-connect"><p>${c ? 'Connection expired. Add a new credential.' : 'Connect your Job Hunt account to save this job.'}</p>${connectionForm}</div>`}
       <label class="label" for="fit-resume">Resume for this job</label><select id="fit-resume" ${disabled}>${s.resumes.map((r,i)=>`<option value="${i}" ${s.selected === i ? 'selected' : ''}>${esc(r?.name || `Version ${i+1} (empty)`)}</option>`).join('')}</select>
+      ${connected ? `<p class="hint preference-live-status" role="status">${esc(this.preferenceStatus())}</p>` : ''}
       ${!hasResume ? '<p class="hint">Add a resume in the Resumes tab to include a fit assessment.</p>' : ''}
       ${saved ? `<div class="capture-saved" role="status"><strong>✓ Saved to Job Hunt</strong><p>${esc(outcome(delivery))}</p><a href="${esc(delivery.origin)}" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></div>` : `<p class="hint">${delivery ? 'Continues the same saved request. No new AI call.' : 'Uses this resume to assess the fit, then saves the job and result.'}</p><button id="tracker-save" class="button primary full" ${busy || !canSave ? 'disabled' : ''}>${busy === 'deliver' ? 'Saving…' : saveLabel}</button>${delivery?.error ? `<p class="notice error">${esc(delivery.error)}</p>` : ''}${delivery?.next_retry_at && Date.now() < delivery.next_retry_at ? `<p class="hint">Try again after ${esc(new Date(delivery.next_retry_at).toLocaleTimeString())}.</p>` : ''}`}
       ${jobs[0]?.error && !current ? `<p class="fit-error notice error">${esc(jobs[0].error)}</p>` : ''}
       ${current ? `<details class="fit-result"><summary>Experience fit: ${esc(({STRONG:'Strong',POSSIBLE:'Possible',WEAK:'Weak'})[current.result.fit] || current.result.fit)}</summary><p>${esc(current.result.explanation)}</p><h4>Strengths</h4><ul>${current.result.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><h4>Gaps</h4><ul>${current.result.gaps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p>Preferences: ${esc(current.result.preference_alignment)} ${esc(current.result.preference_notes)}</p><p class="hint">${esc(current.inputs.resume.label)} · ${esc(current.inputs.model)} · ${esc(current.analyzed_at)}</p></details>` : ''}
       <details class="capture-other" ${this.preferenceDraft ? 'open' : ''}><summary>Other options</summary>
         ${!saved ? `<button id="tracker-save-unassessed" class="button secondary full" ${busy || !connected ? 'disabled' : ''}>Save without assessment</button><p class="hint">Saves the posting only, with any review warnings. A fit cannot be attached later through this import.</p>` : ''}
-        <form id="fit-preferences-form"><label class="label" for="fit-preferences">Optional preferences</label><textarea id="fit-preferences" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft ? this.preferenceDraftText : this.preferences?.notes || '')}</textarea><p class="hint">Location, work model or salary preferences. Blank is allowed.</p><button class="text-button" ${disabled}>Save preferences</button></form>
+        <form id="fit-preferences-form"><label class="label" for="fit-preferences">Additional preference notes</label><textarea id="fit-preferences" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft ? this.preferenceDraftText : this.localPreferences?.notes || '')}</textarea><p class="hint">${c?.capabilities.preferences ? 'Adds to your saved Job Hunt preferences.' : 'Used when Job Hunt preferences are not shared.'} Blank is allowed.</p><button class="text-button" ${disabled}>Save notes</button></form>
         <div class="button-row"><button id="fit-assess" class="text-button" ${disabled}>Assess only</button><button id="fit-compare" class="text-button" ${disabled}>Compare resumes</button></div>
         <p class="hint">Your AI provider receives the selected resume and reviewed posting. Full resumes are not uploaded to Job Hunt.</p>
         ${this.jobs.some(j=>['queued','interrupted'].includes(j.state)) ? `<button id="fit-resume-jobs" class="text-button" ${disabled}>Resume pending assessments</button>` : ''}
@@ -151,7 +171,7 @@ export class CaptureFitPanel {
     on('#fit-resume-jobs', 'click', () => perform('fit', () => this.queue.run()));
     on('#fit-unassessed', 'click', () => perform('serialize', () => this.prepare(true)));
     on('#tracker-connect-form', 'submit', e => { e.preventDefault(); const origin = app.querySelector('#tracker-origin').value, token = app.querySelector('#tracker-credential').value; perform('connect', () => this.delivery.connect(origin, token)); });
-    on('#tracker-disconnect', 'click', () => perform('connect', () => this.delivery.disconnect()));
+    on('#tracker-disconnect', 'click', () => perform('connect', async () => {this.preferenceSync.stop();await this.delivery.disconnect();await workStore.remove('tracker-preferences')}));
     on('#tracker-save', 'click', () => perform('deliver', () => this.saveToJobHunt(false)));
     on('#tracker-save-unassessed', 'click', () => perform('deliver', () => this.saveToJobHunt(true)));
     on('#tracker-freeze', 'click', () => perform('serialize', async () => {

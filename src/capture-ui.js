@@ -24,7 +24,7 @@ export class CapturePanel {
     catch (e) { this.readiness.set(c.id, { eligible: false, reasons: [e.code || 'invalid_capture'], message: e.message }); }
   }
   get current() { return this.captures.find(c => c.id === this.selected); }
-  reset() { this.captures = []; this.selected = null; this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
+  reset() { this.fit.setLiveActive(false); this.captures = []; this.selected = null; this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.localPreferences = null; this.fit.preferenceSource = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
   render(busy) {
     const capture = this.current, candidate = capture?.snapshot.candidates[capture.candidate_index];
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;

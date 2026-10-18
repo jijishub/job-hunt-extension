@@ -56,6 +56,7 @@ function render() {
     ${tab === 'fill' ? fillView() : tab === 'capture' ? capturePanel.render(busy) : tab === 'resumes' ? resumeView() : tab === 'profile' ? profileView() : settingsView()}
     <footer><span>MADE FOR YOUR NEXT CHAPTER.</span><a href="https://jobhunt.jizellecasia.site" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></footer></main>`;
   bind();
+  capturePanel.fit.setLiveActive(tab === 'capture' && document.visibilityState === 'visible');
 }
 function fillView() {
   const fields = allFields();
@@ -277,12 +278,18 @@ function bind() {
   on('#reset', 'click', () => { if (confirm('Delete all resumes, profile, keys, answers, captures, assessments and frozen deliveries?')) task('save', async () => { await clearCaptures(); await clearCaptureWork(); capturePanel.reset(); state = structuredClone(defaults); page = null; answers = []; await persist(); message = 'All local data deleted.'; }); });
 }
 if (isExtension) chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'fit-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
+  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
+  if(changes['tracker-connection'])capturePanel.fit.setLiveActive(false);
+  const prefChange=changes['tracker-preferences'];
+  if(prefChange && (prefChange.oldValue?.preferences_hash !== prefChange.newValue?.preferences_hash || prefChange.oldValue?.origin !== prefChange.newValue?.origin || prefChange.oldValue?.account_id !== prefChange.newValue?.account_id)) {capturePanel.transport.clear();app.querySelector('.capture-transport')?.remove();app.querySelector('.fit-result')?.remove();}
   if (busy) { storageRefreshPending = true; return; }
+  if(tab === 'capture' && document.activeElement?.matches('input,textarea,select') && (capturePanel.drafts.has(capturePanel.selected) || capturePanel.fit.preferenceDraft)) {storageRefreshPending=true;return;}
   refreshLocalState().then(render).catch(e => notify(e.message, true));
 });
 else window.addEventListener('storage', () => {
   if (busy) storageRefreshPending = true;
   else refreshLocalState().then(render).catch(e => notify(e.message, true));
 });
+document.addEventListener('visibilitychange',()=>capturePanel.fit.setLiveActive(tab === 'capture' && document.visibilityState === 'visible'));
+window.addEventListener('pagehide',()=>capturePanel.fit.setLiveActive(false));
 render();

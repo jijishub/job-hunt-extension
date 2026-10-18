@@ -4,6 +4,21 @@ export { canonicalJSON, sha256 } from './canonical-json.js';
 export const PROMPT_VERSION = 'role-fit-v1';
 export const INPUT_MAX_BYTES = 200000;
 export const INPUT_MAX_UNITS = 120000;
+const trackerPreferenceKeys = ['target_companies','target_roles','preferred_locations','work_models','job_types','salary_min','salary_currency','dealbreakers','portfolio_summary'];
+export function validateFitPreferences(value, trackerOnly = false) {
+  if (value == null && !trackerOnly) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid preference context.');
+  const keys = Object.keys(value);
+  if (!trackerOnly && keys.length === 1 && keys[0] === 'notes') {
+    if(typeof value.notes !== 'string' || !value.notes.trim() || value.notes.length > 12000)throw new Error('Use explicit preference notes of at most 12,000 units.');return;
+  }
+  if (keys.some(k=>!trackerPreferenceKeys.includes(k) && (trackerOnly || k!=='additional_notes')) || trackerPreferenceKeys.some(k=>!Object.hasOwn(value,k)))throw new Error('Unsupported Job Hunt preference fields.');
+  for(const k of ['target_companies','target_roles','preferred_locations','work_models','job_types'])if(!Array.isArray(value[k]) || value[k].length>50 || value[k].some(x=>typeof x!=='string' || x.length>200))throw new Error('Invalid Job Hunt preference list.');
+  if(value.work_models.some(x=>!['ON_SITE','HYBRID','REMOTE'].includes(x)) || value.job_types.some(x=>!['FULL_TIME','PART_TIME','CONTRACT','INTERNSHIP'].includes(x)))throw new Error('Invalid preferred work model or job type.');
+  if(value.salary_min!==null && (typeof value.salary_min!=='number' || !Number.isFinite(value.salary_min) || value.salary_min<0))throw new Error('Invalid preferred salary.');
+  if(typeof value.salary_currency!=='string' || !/^[A-Za-z]{3}$/.test(value.salary_currency))throw new Error('Invalid preference salary currency.');
+  for(const k of ['dealbreakers','portfolio_summary',...(Object.hasOwn(value,'additional_notes')?['additional_notes']:[])])if(typeof value[k]!=='string' || value[k].length>12000)throw new Error('Preference text exceeds its limit.');
+}
 const nonblank = (value, max, name) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${name} must be nonblank and at most ${max} UTF-16 units.`);
 };
@@ -26,20 +41,21 @@ export function fitMessages(inputs) {
   if (json.length > INPUT_MAX_UNITS || new TextEncoder().encode(json).byteLength > INPUT_MAX_BYTES) throw new Error('Role-fit input exceeds the pilot budget (120,000 UTF-16 units / 200,000 UTF-8 bytes). Nothing was truncated. Use a suitable shorter evidence document or leave this capture Unassessed.');
   return messages;
 }
-export async function makeFitInputs(capture, serialized, resume, preferences, settings) {
+export async function makeFitInputs(capture, serialized, resume, preferences, settings, preferenceSource = null) {
   if (!serialized.assessment.eligible) throw new Error('Assessment blocked: ' + serialized.assessment.reasons.join(', ') + '. Follow the capture review actions shown above.');
   nonblank(resume?.id, 100, 'Resume ID'); nonblank(resume?.text, Infinity, 'Resume text'); nonblank(settings.model, 100, 'Model');
   if (resume.label != null && (typeof resume.label !== 'string' || resume.label.length > 200)) throw new Error('Resume label must be at most 200 units.');
   gatewayURL(settings.baseUrl);
-  if (preferences != null && (typeof preferences.notes !== 'string' || !preferences.notes.trim() || preferences.notes.length > 12000 || Object.keys(preferences).some(k => k !== 'notes'))) throw new Error('Use explicit preference notes of at most 12,000 units.');
+  validateFitPreferences(preferences);
   const inputs = { capture_id: capture.id, review_hash: capture.review_basis_hash, posting: structuredClone(serialized.payload.posting), resume: { id: resume.id, label: resume.label ?? null, text: resume.text },
-    preferences: preferences == null ? null : structuredClone(preferences), model: settings.model, baseUrl: settings.baseUrl, prompt_version: PROMPT_VERSION };
+    preferences: preferences == null ? null : structuredClone(preferences), model: settings.model, baseUrl: settings.baseUrl, prompt_version: PROMPT_VERSION,
+    ...(preferenceSource ? {preference_source:structuredClone(preferenceSource)} : {}) };
   inputs.posting_hash = await sha256(canonicalJSON(inputs.posting));
   inputs.resume_hash = await sha256(resume.text);
   inputs.preferences_hash = preferences == null ? null : await sha256(canonicalJSON(preferences));
   fitMessages(inputs); // Validate the complete request before persisting/queueing it.
   inputs.binding_hash = await sha256(canonicalJSON({ posting: inputs.posting_hash, resume: inputs.resume_hash, resume_id: resume.id, label: inputs.resume.label,
-    preferences: inputs.preferences_hash, model: inputs.model, baseUrl: inputs.baseUrl, prompt_version: PROMPT_VERSION, review: inputs.review_hash, capture_id: capture.id }));
+    preferences: inputs.preferences_hash, ...(preferenceSource ? {preference_source:inputs.preference_source} : {}), model: inputs.model, baseUrl: inputs.baseUrl, prompt_version: PROMPT_VERSION, review: inputs.review_hash, capture_id: capture.id }));
   return inputs;
 }
 export async function callRoleFit(inputs, settings, { fetcher = fetch, signal } = {}) {

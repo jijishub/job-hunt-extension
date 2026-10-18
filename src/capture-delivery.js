@@ -93,9 +93,11 @@ export class CaptureDelivery {
       }
       if (r.next_retry_at && this.now() < r.next_retry_at) return r;
       if (r.attempts >= 5) { r.state = 'paused'; r.error = 'Retry budget exhausted. Inspect the delivery; the frozen body is preserved.'; return this.save(r); }
+      if(await sha256(r.body) !== r.body_hash){r.state='paused';r.error='The frozen request was altered. No upload was made.';return this.save(r);}
       let valid = false;
-      try { valid = await sha256(r.body) === r.body_hash && await this.guard(r); } catch { /* A deleted or invalid current capture pauses delivery. */ }
-      if (!valid) { r.state = 'paused'; r.error = 'Current inputs changed or the frozen request was altered. No upload was made.'; return this.save(r); }
+      try { valid = await this.guard(r); } catch { /* Changed preferences or deleted inputs cannot authorize a POST. */ }
+      const checkReceipt = r.state === 'uncertain' || r.receipt_check_required;
+      if (!valid && !checkReceipt) { r.state = 'paused'; r.error = r.error || 'Current inputs changed. No upload was made. Recapture and reassess to prepare a new request.'; return this.save(r); }
       try {
         const verified = await this.verify(c.origin, c.credential);
         if (verified.account.id !== r.account_id || (JSON.parse(r.body).extension_assessment && verified.capabilities.extension_assessments !== true)) {
@@ -105,7 +107,7 @@ export class CaptureDelivery {
       } catch {
         c.verified = false; await this.store.set('tracker-connection', c); r.state = 'paused'; r.error = 'Connection verification failed. Reconnect or check access.'; return this.save(r);
       }
-      if (r.state === 'uncertain' && r.lookups < 3) {
+      if (checkReceipt && r.lookups < 3) {
         r.lookups++; await this.save(r);
         try {
           const response = await this.request(r.origin, '/api/v1/captures?ids=' + encodeURIComponent(r.id), c.credential);
@@ -114,9 +116,11 @@ export class CaptureDelivery {
           if (response.ok) {
             const data = await response.json(), receipt = data.captures?.find(v => v.capture_id === r.id);
             if (receipt) { r.receipt = this.receipt(r, receipt); r.state = 'delivered'; r.error = null; return this.save(r); }
+            r.receipt_check_required = false;
           } else { r.error = 'Receipt lookup unavailable; retry the same frozen request later.'; r.next_retry_at = this.delay(response, r.attempts); return this.save(r); }
         } catch { r.error = 'Receipt lookup uncertain. Retry later; the body remains frozen.'; r.next_retry_at = this.delay(null, r.attempts); return this.save(r); }
       }
+      if(!valid){r.state='paused';r.error='No receipt found. Current preferences or inputs changed; the original request stays frozen. Recapture and reassess before a new delivery.';return this.save(r);}
       r.state = 'sending'; r.attempts++; r.error = null; await this.save(r);
       let response;
       try {
