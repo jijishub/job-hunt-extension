@@ -41,7 +41,7 @@ export class CapturePanel {
   get current() { return this.captures.find(c => c.id === this.selected); }
   reset() { this.fit.setLiveActive(false); this.captures = []; this.selected = null; this.resumeIndex=null;this.tabDiagnostics.clear();this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.localPreferences = null; this.fit.preferenceSource = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
   render(busy) {
-    const capture = this.current, candidate = capture?.snapshot.candidates[capture.candidate_index];
+    const capture = this.current;
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;
     const disabled = busy ? 'disabled' : '';
     const warnings = capture ? captureWarnings(capture) : [];
@@ -77,10 +77,11 @@ export class CapturePanel {
         <label class="label" for="resolution-note-${i}">What did you check or correct?</label><textarea id="resolution-note-${i}" data-resolution-note="${esc(warning.id)}" rows="2" maxlength="2000" ${disabled}>${esc(resolution?.note || '')}</textarea></div>` };
     }).filter(Boolean) : [];
     const needsDecision = w => !reviewCodes.has(w.code) && w.code !== 'collapsed_content' && !(w.code === 'conflicting_sources' && w.field === 'description');
-    const resolutionControls = controls.filter(c=>needsDecision(c.warning)).map(c=>statusFor(c.warning).startsWith('Resolved') ? `<details><summary>${esc(warningNames[c.warning.code] || 'Review decision')} · Resolved</summary>${c.html}</details>` : c.html).join('');
+    const decisions=controls.filter(c=>needsDecision(c.warning));
+    const unresolvedDecisions=decisions.some(c=>!statusFor(c.warning).startsWith('Resolved'));
+    const resolutionControls = decisions.map(c=>`<div class="capture-decision" ${statusFor(c.warning).startsWith('Resolved') && !draft?'hidden':''}>${c.html}</div>`).join('');
     const clipping = warnings.filter(w=>w.code === 'collapsed_content');
     const clippingResolved = clipping.length && clipping.every(w=>resolutions.some(r=>r.warning_id===w.id && r.action && r.note?.trim()));
-    const transport = this.transport.get(capture?.id);
     const field = ([key, label]) => {
       const value = key === 'description' ? composeRequirements(posting) : posting[key];
       const options = key === 'work_model' ? ['ON_SITE', 'HYBRID', 'REMOTE'] : key === 'job_type' ? ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP'] : null;
@@ -104,20 +105,19 @@ export class CapturePanel {
       ${capture.snapshot.candidates.length > 1 ? `<label class="label" for="capture-candidate">WHICH POSTING?</label><select id="capture-candidate" ${disabled}><option value="">Choose a posting</option>${capture.snapshot.candidates.map((c, i) => `<option value="${i}" ${capture.candidate_index === i ? 'selected' : ''}>${esc(c.posting.role_title || 'Untitled')} · ${esc(c.posting.company_name || 'Unknown company')} (${esc(c.adapter)})</option>`).join('')}</select>` : ''}
       ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => ['role_title','company_name','description'].includes(key)).map(field).join('')}
       <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
-      <details><summary>Edit location, work type & salary</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
-      ${resolutionControls ? `<div class="capture-resolutions"><h3>Check these differences</h3>${resolutionControls}</div>` : ''}
-      ${readiness?.eligible && !draft ? '<details class="capture-review-again"><summary>Review again</summary>' : ''}<div class="capture-completeness">${clipping.length ? `<p class="hint">The page may hide part of the description.</p><label class="check"><input id="capture-clipping-confirmed" type="checkbox" ${clippingResolved && !draft ? 'checked' : ''} ${disabled}> I expanded the original posting and verified that all its text is included here.</label>` : ''}<label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I checked the title, company and full description against the job page.</label><button id="capture-confirm-completeness" type="button" class="button ${readiness?.eligible && !draft ? 'secondary' : 'primary'} full" disabled>Confirm review</button></div>${readiness?.eligible && !draft ? '</details>' : ''}
+      <details><summary>Edit details</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
+      ${resolutionControls ? `<div class="capture-resolutions" ${!unresolvedDecisions && !draft?'hidden':''}><h3>Check these differences</h3>${resolutionControls}</div>` : ''}
+      <div class="capture-completeness" ${readiness?.eligible && !draft?'hidden':''}>${clipping.length ? `<p class="hint">The page may hide part of the description.</p><label class="check"><input id="capture-clipping-confirmed" type="checkbox" ${clippingResolved && !draft ? 'checked' : ''} ${disabled}> I expanded the original posting and verified that all its text is included here.</label>` : ''}<label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I checked the title, company and full description against the job page.</label><button id="capture-confirm-completeness" type="button" class="button primary full" disabled>Confirm review</button></div>
       </form>` : ''}
       <details class="capture-evidence"><summary>Sources & review history</summary><p class="hint">${capture.snapshot.candidates.length} source(s) · ${warnings.filter(w=>!INFORMATIONAL_WARNINGS.has(w.code) && !statusFor(w).startsWith('Resolved')).length} review note(s) unresolved · ${capture.reviewed_at && !draft ? 'Reviewed' : 'Needs review'}</p><a href="${esc(capture.snapshot.page_url)}" target="_blank" rel="noreferrer">Original posting ↗</a>
-      <details><summary>Warning history (${warnings.length})</summary><div class="capture-warnings" role="note"><ul>${warningList(warnings)}</ul></div></details>
-      ${capture.snapshot.candidates.map((c, i) => `<details class="capture-source"><summary>Original source ${i + 1} · ${esc(c.adapter)}</summary><p class="hint">${esc(capture.snapshot.captured_at)} · ${esc(capture.snapshot.extractor_version)}</p><details><summary>Page text</summary><pre>${esc(c.source.rendered_text || '(None captured)')}</pre></details><details><summary>Structured text</summary><pre>${esc(c.source.structured_text || '(None captured)')}</pre></details><details><summary>Extraction details</summary><pre>${esc(JSON.stringify({ requisition_id:c.source.requisition_id, salary_period:c.source.salary_period, structured_data: c.source.structured_data, structured_url: c.source.structured_url, provenance: c.provenance }, null, 2))}</pre></details></details>`).join('')}</details>
+      <div class="capture-evidence-body"><h3>Review notes</h3>${warnings.length?`<ul>${warningList(warnings)}</ul>`:'<p>No warnings.</p>'}
+      ${capture.snapshot.candidates.map((c, i) => `<article class="capture-source"><h3>Source ${i + 1} · ${esc(c.adapter)}</h3><h4>Page text</h4><pre>${esc(c.source.rendered_text || '(None captured)')}</pre><h4>Structured text</h4><pre>${esc(c.source.structured_text || '(None captured)')}</pre></article>`).join('')}</div><p class="hint">Export capture includes all original evidence and extraction details.</p></details>
       </section>` : ''}
       ${this.fit.render(capture, busy)}
-      ${capture ? `<details class="card capture-advanced"><summary>Export & advanced tools</summary><div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export local capture</button></div><p class="hint">Offline requests do not upload or call AI.</p><button id="capture-prepare" class="button secondary full" ${disabled}>Prepare offline request</button>
-      ${transport ? `<div class="capture-transport"><p>${transport.bytes} / ${transport.max_bytes} UTF-8 bytes</p><p>${transport.assessment.eligible ? 'Local review checks passed; server validation is still required.' : `Assessment blocked: ${esc(transport.assessment.reasons.join(', '))}`}</p><details><summary>Proposed request JSON</summary><pre>${esc(transport.json)}</pre></details><button id="capture-transport-export" class="text-button">Download offline request JSON</button></div>` : ''}</details>` : ''}`;
+      ${capture ? `<div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export capture</button></div>` : ''}`;
   }
-  bind(app, task, refresh) {
-    this.fit.bind(app, task, refresh);
+  bind(app, task) {
+    this.fit.bind(app, task);
     const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
     on('#capture-posting', 'click', () => task('capture', async () => {
       this.lastCaptureFailure = null; this.diagnosticsCopied = false;
@@ -167,21 +167,25 @@ export class CapturePanel {
     const keepDraft = () => {
       this.drafts.set(this.current.id, { values: Object.fromEntries(new FormData(form)), reviewed: false, resolutions: readResolutions() });
       this.transport.delete(this.current.id);
-      app.querySelector('.capture-transport')?.remove();
       app.querySelector('.fit-result')?.remove();
       app.querySelectorAll('[data-warning-state="resolved"]').forEach(node => { node.dataset.warningState = 'unresolved'; node.querySelector('.warning-status').textContent = 'Needs current saved review'; });
       const status = app.querySelector('.capture-assessment-status');
       if (status) { status.innerHTML = '<p>Changes not saved. Confirm review below.</p>'; status.classList.remove('is-ready'); }
       const saveButton = app.querySelector('#tracker-save');
       if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Confirm review above'; }
+      const assessButton=app.querySelector('#fit-assess');
+      if(assessButton)assessButton.disabled=true;
       app.querySelector('.capture-status').textContent = 'Unsaved changes';
     };
     const invalidate = (resolutions) => {
-      form.querySelector('.capture-review-again')?.setAttribute('open','');
+      form.querySelector('.capture-completeness').hidden=false;
       form.querySelector('#capture-completeness-confirmed').checked = false;
       form.querySelector('#capture-confirm-completeness').disabled = true;
       if (resolutions) {
         inheritedResolutions = [];
+        const decisionPanel=form.querySelector('.capture-resolutions');
+        if(decisionPanel)decisionPanel.hidden=false;
+        form.querySelectorAll('.capture-decision').forEach(node=>{node.hidden=false;});
         const clippingCheck = form.querySelector('#capture-clipping-confirmed');
         if (clippingCheck) clippingCheck.checked = false;
         form.querySelectorAll('[data-resolution-action]').forEach(el => { el.value = ''; });
@@ -227,21 +231,12 @@ export class CapturePanel {
         await this.checkReadiness();
       });
     });
-    on('#capture-prepare', 'click', () => task('serialize', async () => {
-      if (this.drafts.has(this.current.id)) throw new Error('Save corrections and resolutions before preparing offline request JSON.');
-      if (this.fit.preferenceDraft) throw new Error('Save preference edits first.');
-      await this.fit.prepare();
-    }));
     const download = (value, filename) => {
       const url = URL.createObjectURL(new Blob([value], { type: 'application/json' }));
       const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
     on('#capture-diagnostics-copy', 'click', () => task('copy', async () => { await navigator.clipboard.writeText(JSON.stringify(this.lastCaptureFailure, null, 2)); this.diagnosticsCopied = true; }));
     on('#capture-diagnostics-export', 'click', () => download(JSON.stringify(this.lastCaptureFailure, null, 2), 'job-hunt-capture-diagnostics.json'));
-    on('#capture-transport-export', 'click', () => {
-      const prepared = this.transport.get(this.current.id);
-      if (prepared) download(prepared.json, `job-hunt-offline-request-${this.current.id}.json`);
-    });
     form?.addEventListener('submit', e => e.preventDefault());
     on('#capture-export', 'click', () => {
       if (this.drafts.has(this.current.id)) { alert('Save your corrections before exporting.'); return; }

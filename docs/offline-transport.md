@@ -1,6 +1,6 @@
 # Offline capture transport pilot
 
-This records the completed offline phase. The subsequent [extension role-fit phase](extension-role-fit.md) adds explicit gateway assessments and loopback-only authenticated delivery testing. Production uploads remain disabled. The source, correction and serializer rules below still apply; statements about missing authentication/delivery or untested server interoperability describe the earlier phase.
+This records the completed offline phase, when production uploads were disabled. The current [extension role-fit workflow](extension-role-fit.md) supports explicit gateway assessments and authenticated delivery to the canonical production origin or loopback. The source, correction and serializer rules below still apply; the older UI labels and delivery limitations describe the earlier phase.
 
 Implemented against the tracker proposal's **Pilot reconciliation — tracker-side decisions**, read on 2026-10-18, plus the user's final tracker v1 decisions. The supplied attachment and local `../job-hunt/EXTENSION-CAPTURE-CONTRACT.md` matched after newline normalization at the initial review; the final decisions below resolve the questions raised then. No tracker files, network uploads, authentication, outbox delivery or automatic assessments were added.
 

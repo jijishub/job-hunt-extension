@@ -5,3 +5,28 @@ artifacts/
 !.env.example
 
 dist/
+
+# Local credentials, browser sessions, resumes and capture exports
+private/
+credentials/
+resumes/
+.secrets/
+.auth/
+playwright/.auth/
+.browser-profile/
+browser-profile/
+*.pem
+*.key
+*.p12
+*.pfx
+*.pdf
+*.docx
+*resume*.txt
+.credentials*
+credentials*.json
+secrets*.json
+*storage-state*.json
+storageState*.json
+job-hunt-capture-*.json
+job-hunt-offline-request-*.json
+*.log

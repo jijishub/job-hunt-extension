@@ -28,7 +28,6 @@ export class CaptureFitPanel {
   async load() { await this.queue.recover(); await this.delivery.recover(); await this.reload(); }
   async reload() {
     [this.jobs, this.deliveries, this.localPreferences, this.connection] = await Promise.all([this.queue.jobs(), this.delivery.records(), workStore.get('fit-preferences'), this.delivery.connection()]);
-    this.boundCaptureIds=new Set((await captureWorkspaces()).map(w=>w.capture_id).filter(Boolean));
     const snapshot=await this.preferenceSync.cached(this.connection);
     this.preferences=effectivePreferences(snapshot,this.localPreferences);
     this.preferenceSource=snapshot ? {origin:snapshot.origin,account_id:snapshot.account_id} : null;
@@ -72,12 +71,23 @@ export class CaptureFitPanel {
     const c = this.owner.current;
     if (this.owner.drafts.has(c.id)) throw new Error('Save corrections and review before preparing a request.');
     const job = !unassessed && this.jobs.find(j => this.matches(j, c));
+    if(!unassessed && !job)throw new Error('Assess the current posting before saving its fit.');
     const prepared = job ? await serializeAssessedCapture(c, await this.inputs(), job) : await serializeCapture(c);
     this.owner.transport.set(c.id, prepared); return prepared;
   }
-  async deleteCapture(id) {
-    for (const job of await this.queue.jobs()) if (job.inputs.capture_id === id) await workStore.remove('fit-job:' + job.id);
-    await workStore.remove('capture-delivery:' + id); await this.reload();
+  async assessCurrent() {
+    if(this.preferenceDraft)throw new Error('Save preference edits in Settings first.');
+    const capture=this.owner.current;
+    if((await this.delivery.records()).some(r=>r.id===capture?.id))throw new Error('This capture already has a saved request. Continue its save instead of assessing it again.');
+    const inputs=await this.inputs();
+    await this.reload();
+    if(this.jobs.some(j=>this.matches(j,capture)))return;
+    const pending=this.jobs.find(j=>['queued','interrupted'].includes(j.state) && j.inputs.binding_hash===inputs.binding_hash);
+    const job=pending || await this.queue.enqueue(inputs);
+    const result=await this.queue.run([job.id]);
+    if(result===null)throw new Error('Another AI request is active. Try this assessment again after it finishes.');
+    await this.reload();
+    if(!this.jobs.some(j=>this.matches(j,capture)))throw new Error(this.jobs.find(j=>j.id===job.id)?.error || 'The assessment did not finish. Try again when ready.');
   }
   async freezeCurrent(prepared, expectedConnection = null) {
     if (this.preferenceDraft) throw new Error('Save preference edits first.');
@@ -103,12 +113,8 @@ export class CaptureFitPanel {
     if (!unassessed) {
       if (verified.capabilities.extension_assessments !== true) throw new Error('This Job Hunt server does not accept extension fit results yet. Deploy the current capture API or save without assessment.');
       const inputs = await this.inputs(); // Includes current identity/completeness validation.
-      if (!(await this.queue.jobs()).some(j => this.matches(j, capture))) {
-        const job = await this.queue.enqueue(inputs); await this.queue.run([job.id]);
-      }
       await this.reload();
-      if (!this.jobs.some(j => this.matches(j, capture))) throw new Error('Assessment did not complete for the current inputs. The capture is still local. Review the assessment error, retry explicitly, or choose Save without assessment.');
-      this.refresh?.(); // Show the completed answer while tracker delivery is still running.
+      if (!this.jobs.some(j => this.matches(j, capture) && j.inputs.binding_hash===inputs.binding_hash)) throw new Error('Assess the current posting first, read the result, then save it to Job Hunt.');
     }
     const prepared = await this.prepare(unassessed), frozen = await this.freezeCurrent(prepared, { origin: connection.origin, account_id: connection.account.id });
     return this.delivery.send(frozen.id);
@@ -125,67 +131,68 @@ export class CaptureFitPanel {
     }
     return true;
   }
-  render(capture, busy) {
-    if (!capture || !this.runtime) return '';
-    const s = this.runtime.getState(), disabled = busy ? 'disabled' : '', current = this.jobs.find(j => this.matches(j, capture));
-    const jobs = this.jobs.filter(j => j.inputs.capture_id === capture.id), c = this.connection;
-    const connected = c?.verified && Date.now() < c.expires_at;
-    const delivery = this.deliveries.find(r => r.id === capture.id), saved = delivery?.state === 'delivered';
-    const reviewed = this.owner.readiness.get(capture.id)?.eligible && !this.owner.drafts.has(capture.id);
-    const hasResume = !!s.resumes[s.selected]?.text;
-    const canSave = connected && reviewed && (delivery || hasResume) && !this.preferenceDraft;
-    const saveLabel = saved ? 'Saved to Job Hunt' : !connected ? 'Connect Job Hunt first' : !reviewed ? 'Confirm review above' : this.preferenceDraft ? 'Save preferences first' : delivery ? 'Retry save' : !hasResume ? 'Add a resume first' : current ? 'Save to Job Hunt' : 'Assess & save to Job Hunt';
-    const connectionForm = `<p class="hint"><a href="${JOB_HUNT_ORIGIN}" target="_blank" rel="noreferrer">Get a credential in Job Hunt</a>: My preferences → Job Hunt extension.</p><form id="tracker-connect-form"><label class="label" for="tracker-credential">Extension credential</label><input id="tracker-credential" type="password" autocomplete="off" required ${disabled}><details><summary>Server address</summary><input id="tracker-origin" type="url" aria-label="Job Hunt server" value="${esc(c?.origin || JOB_HUNT_ORIGIN)}" required ${disabled}></details><button class="button secondary full" ${disabled}>Connect Job Hunt</button></form>${c ? `<p class="hint">Expires ${esc(new Date(c.expires_at).toLocaleString())}</p><button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect</button>` : ''}`;
-    const outcome = r => r.receipt?.record_deleted ? 'The linked role was deleted. It has not been recreated.' : r.receipt?.disposition === 'draft' ? 'Saved as a draft. Add the missing job details in Job Hunt.' : r.receipt?.extension_assessment?.disposition === 'stored_only' ? 'Saved to capture history. The existing role and rating were kept.' : r.receipt?.extension_assessment?.disposition === 'applied' ? 'Posting and fit saved as a Not started role.' : 'Posting saved without assessment.';
-    return `<section class="card capture-fit capture-deliveries"><div class="section-head"><span class="step">3</span><h2>Save to Job Hunt</h2></div>
-      ${connected ? `<p class="connection-status">✓ Connected as ${esc(c.account.email)}</p><details><summary>Manage connection</summary>${connectionForm}</details>` : `<div class="capture-connect"><p>${c ? 'Connection expired. Add a new credential.' : 'Connect your Job Hunt account to save this job.'}</p>${connectionForm}</div>`}
-      <label class="label" for="fit-resume">Resume for this job</label><select id="fit-resume" ${disabled}>${s.resumes.map((r,i)=>`<option value="${i}" ${s.selected === i ? 'selected' : ''}>${esc(r?.name || `Version ${i+1} (empty)`)}</option>`).join('')}</select>
-      ${connected ? `<p class="hint preference-live-status" role="status">${esc(this.preferenceStatus())}</p>` : ''}
-      ${!hasResume ? '<p class="hint">Add a resume in the Resumes tab to include a fit assessment.</p>' : ''}
-      ${saved ? `<div class="capture-saved" role="status"><strong>✓ Saved to Job Hunt</strong><p>${esc(outcome(delivery))}</p><a href="${esc(delivery.origin)}" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></div>` : `<p class="hint">${delivery ? 'Continues the same saved request. No new AI call.' : 'Uses this resume to assess the fit, then saves the job and result.'}</p><button id="tracker-save" class="button primary full" ${busy || !canSave ? 'disabled' : ''}>${busy === 'deliver' ? 'Saving…' : saveLabel}</button>${delivery?.error ? `<p class="notice error">${esc(delivery.error)}</p>` : ''}${delivery?.next_retry_at && Date.now() < delivery.next_retry_at ? `<p class="hint">Try again after ${esc(new Date(delivery.next_retry_at).toLocaleTimeString())}.</p>` : ''}`}
-      ${jobs[0]?.error && !current ? `<p class="fit-error notice error">${esc(jobs[0].error)}</p>` : ''}
-      ${current ? `<section class="fit-result" aria-label="Role fit assessment"><h3>Role fit: ${esc(({STRONG:'Strong',POSSIBLE:'Possible',WEAK:'Weak'})[current.result.fit] || current.result.fit)}</h3><p class="hint">Based on ${esc(current.inputs.resume.label || 'your selected resume')}</p><p>${esc(current.result.explanation)}</p><h4>Strengths</h4>${current.result.strengths.length ? `<ul>${current.result.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>` : '<p>None identified.</p>'}<h4>Gaps</h4>${current.result.gaps.length ? `<ul>${current.result.gaps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>` : '<p>None identified.</p>'}<h4>Your preferences: ${esc(({ALIGNED:'Aligned',MIXED:'Mixed',MISALIGNED:'Not aligned',UNKNOWN:'Not assessed'})[current.result.preference_alignment])}</h4>${current.result.preference_notes ? `<p>${esc(current.result.preference_notes)}</p>` : ''}<details><summary>Assessment details</summary><p class="hint">${esc(current.inputs.model)} · ${esc(current.analyzed_at)}</p></details></section>` : ''}
-      <details class="capture-other" ${this.preferenceDraft ? 'open' : ''}><summary>Other options</summary>
-        ${!saved ? `<button id="tracker-save-unassessed" class="button secondary full" ${busy || !connected ? 'disabled' : ''}>Save without assessment</button><p class="hint">Saves the posting only, with any review warnings. A fit cannot be attached later through this import.</p>` : ''}
-        <form id="fit-preferences-form"><label class="label" for="fit-preferences">Additional preference notes</label><textarea id="fit-preferences" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft ? this.preferenceDraftText : this.localPreferences?.notes || '')}</textarea><p class="hint">${c?.capabilities.preferences ? 'Adds to your saved Job Hunt preferences.' : 'Used when Job Hunt preferences are not shared.'} Blank is allowed.</p><button class="text-button" ${disabled}>Save notes</button></form>
-        <div class="button-row"><button id="fit-assess" class="text-button" ${disabled}>Assess only</button><button id="fit-compare" class="text-button" ${disabled}>Compare resumes</button></div>
-        <p class="hint">Your AI provider receives the selected resume and reviewed posting. Full resumes are not uploaded to Job Hunt.</p>
-        ${this.jobs.some(j=>['queued','interrupted'].includes(j.state)) ? `<button id="fit-resume-jobs" class="text-button" ${disabled}>Resume pending assessments</button>` : ''}
-        ${jobs.length ? `<details><summary>Assessment history (${jobs.length})</summary>${jobs.map(j=>`<p data-fit-job="${esc(j.id)}">${esc(j.inputs.resume.label)}: ${esc(j.state)}${j.result ? ' · '+esc(j.result.fit) : ''}<br>${esc(j.error || j.analyzed_at || j.created_at)}</p>`).join('')}</details>` : ''}
-        <details><summary>Advanced delivery</summary><button id="fit-unassessed" class="text-button" ${disabled}>Prepare as Unassessed</button><button id="tracker-freeze" class="text-button" ${disabled}>Freeze prepared request</button>
-        ${this.deliveries.filter(r=>r.id===capture.id || !this.boundCaptureIds?.has(r.id)).map(r=>`<article><h3>${r.state === 'delivered' ? 'Saved to Job Hunt' : 'Delivery: '+esc(r.state)}</h3><p>${esc(r.origin)} · ${esc(r.id)} · ${esc(r.state)}</p><p>${esc(r.error || '')}</p>${r.validation ? `<pre>${esc(JSON.stringify(r.validation,null,2))}</pre>` : ''}${r.receipt ? `<p>${esc(outcome(r))}</p>` : `<button data-delivery-send="${esc(r.id)}" class="text-button" ${disabled}>Retry / check delivery</button>`}<details><summary>Request and receipt</summary><pre>${esc(r.body)}</pre><pre>${esc(JSON.stringify(r.receipt,null,2))}</pre></details></article>`).join('')}</details>
-      </details></section>`;
+  renderSettings(busy) {
+    const c=this.connection, disabled=busy?'disabled':'';
+    const connected=c?.verified && Date.now()<c.expires_at;
+    const recoverable=this.deliveries.filter(r=>!['delivered','stopped','conflict','too_large','validation_error'].includes(r.state));
+    const label=r=>{try{return JSON.parse(r.body).posting?.role_title || 'Saved posting';}catch{return 'Saved posting';}};
+    return `<section class="card tracker-settings"><h2>Job Hunt connection</h2>
+      <p class="connection-status">${connected ? `Connected as ${esc(c.account.email)}` : c ? 'Connection expired or needs reconnecting.' : 'Connect Job Hunt to save reviewed postings and fit results.'}</p>
+      <p class="hint"><a href="${JOB_HUNT_ORIGIN}" target="_blank" rel="noreferrer">Create an extension credential in Job Hunt</a> under My preferences → Job Hunt extension.</p>
+      <form id="tracker-connect-form"><label class="label" for="tracker-origin">Server address</label><input id="tracker-origin" type="url" value="${esc(c?.origin || JOB_HUNT_ORIGIN)}" required ${disabled}>
+      <label class="label" for="tracker-credential">${c?'New extension credential':'Extension credential'}</label><input id="tracker-credential" type="password" autocomplete="off" required ${disabled}>
+      <button class="button secondary full" ${disabled}>${c?'Update connection':'Connect Job Hunt'}</button></form>
+      ${c?`<p class="hint">Credential expires ${esc(new Date(c.expires_at).toLocaleString())}</p><button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect Job Hunt</button>`:''}
+      </section><section class="card"><h2>Additional preference notes</h2><p class="hint">Optional notes shared across tabs. ${c?.capabilities.preferences?'Added to your saved Job Hunt preferences.':'Used when Job Hunt preferences are not shared.'}</p>
+      <form id="fit-preferences-form"><textarea id="fit-preferences" aria-label="Additional preference notes" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft?this.preferenceDraftText:this.localPreferences?.notes || '')}</textarea><button class="button secondary full" ${disabled}>Save notes</button></form></section>
+      ${recoverable.length?`<section class="card"><h2>Unfinished saves</h2><p class="hint">Retrying checks the original save and never runs AI again.</p>${recoverable.map(r=>`<article><h3>${esc(label(r))}</h3>${r.error?`<p class="hint">${esc(r.error)}</p>`:''}<button data-delivery-send="${esc(r.id)}" class="button secondary full" ${disabled}>Retry save</button></article>`).join('')}</section>`:''}`;
   }
-  bind(app, task, refresh) {
-    this.refresh = refresh;
-    const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
-    const perform = (name, fn) => task(name, async () => { try { await fn(); } finally { await this.reload(); } });
-    on('#fit-resume', 'change', e => perform('save', () => this.runtime.setSelected(Number(e.target.value))));
-    // Unsaved preference edits immediately hide the current result and prepared body.
-    on('#fit-preferences', 'input', e => { this.owner.transport.clear(); app.querySelector('.capture-transport')?.remove(); app.querySelector('.fit-result')?.remove(); this.preferenceDraft = true; this.preferenceDraftText = e.target.value; const save = app.querySelector('#tracker-save'); if (save) { save.disabled = true; save.textContent = 'Save preferences first'; } });
-    on('#fit-preferences-form', 'submit', e => { e.preventDefault(); const notes = app.querySelector('#fit-preferences').value; perform('save', async () => { await workStore.set('fit-preferences', notes.trim() ? { notes } : null); this.preferenceDraft = false; this.owner.transport.clear(); }); });
-    const assess = compare => perform('fit', async () => {
-      if (this.preferenceDraft) throw new Error('Save preference edits first.');
-      const s = this.runtime.getState(), indexes = compare ? s.resumes.flatMap((r, i) => r?.text ? [i] : []) : [s.selected];
-      if (!indexes.length) throw new Error('Add a resume first.');
-      // Validate every comparison before queuing any provider request.
-      const inputs = await Promise.all(indexes.map(i => this.inputs(i)));
-      for (const input of inputs) await this.queue.enqueue(input);
-      this.owner.transport.clear(); await this.queue.run();
+  render(capture, busy) {
+    if(!capture || !this.runtime)return '';
+    const s=this.runtime.getState(), disabled=busy?'disabled':'';
+    const current=this.jobs.find(j=>this.matches(j,capture));
+    const latest=this.jobs.find(j=>j.inputs.capture_id===capture.id && j.inputs.resume.id===`resume-slot-${s.selected+1}`);
+    const c=this.connection, connected=c?.verified && Date.now()<c.expires_at;
+    const delivery=this.deliveries.find(r=>r.id===capture.id), saved=delivery?.state==='delivered';
+    const terminal=delivery && ['stopped','conflict','too_large','validation_error'].includes(delivery.state);
+    const reviewed=this.owner.readiness.get(capture.id)?.eligible && !this.owner.drafts.has(capture.id);
+    const hasResume=!!s.resumes[s.selected]?.text;
+    const canAssess=reviewed && hasResume && !this.preferenceDraft && !delivery;
+    const canSave=connected && !this.preferenceDraft && !this.owner.drafts.has(capture.id) && !terminal && (delivery || reviewed && current);
+    const outcome=r=>r.receipt?.record_deleted?'The linked role was deleted. It has not been recreated.':r.receipt?.disposition==='draft'?'Saved as a draft in Job Hunt.':r.receipt?.extension_assessment?.disposition==='stored_only'?'Saved to capture history. Your existing role and rating were kept.':r.receipt?.extension_assessment?.disposition==='applied'?'Posting and fit saved as a Not started role.':'Posting saved without assessment.';
+    return `<section class="card capture-fit"><div class="section-head"><span class="step">3</span><h2>Assess role fit</h2></div>
+      <label class="label" for="fit-resume">Resume for this job</label><select id="fit-resume" ${disabled}>${s.resumes.map((r,i)=>`<option value="${i}" ${s.selected===i?'selected':''}>${esc(r?.name || `Version ${i+1} (empty)`)}</option>`).join('')}</select>
+      ${connected?`<p class="hint preference-live-status" role="status">${esc(this.preferenceStatus())}</p>`:''}
+      ${!hasResume?'<p class="hint">Add a resume in the Resumes tab first.</p>':''}
+      ${!reviewed?'<p class="hint">Confirm the posting review above before assessing.</p>':''}
+      ${this.preferenceDraft?'<p class="hint">Save your preference changes in Settings first.</p>':''}
+      ${!current && !delivery?`<button id="fit-assess" class="button primary full fit-assess-action" ${busy || !canAssess?'disabled':''}>${busy==='fit'?'Assessing…':latest && ['failed','interrupted','queued'].includes(latest.state)?'Retry assessment only':'Assess fit only'}</button><p class="hint">Uses your AI gateway. Nothing is uploaded to Job Hunt.</p>`:''}
+      ${latest?.error && !current && !delivery?`<p class="fit-error notice error">${esc(latest.error)}</p>`:''}
+      ${current?`<section class="fit-result" aria-label="Role fit assessment"><h3>Role fit: ${esc(({STRONG:'Strong',POSSIBLE:'Possible',WEAK:'Weak'})[current.result.fit] || current.result.fit)}</h3><p>${esc(current.result.explanation)}</p><h4>Strengths</h4>${current.result.strengths.length?`<ul>${current.result.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<p>None identified.</p>'}<h4>Gaps</h4>${current.result.gaps.length?`<ul>${current.result.gaps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<p>None identified.</p>'}<h4>Your preferences: ${esc(({ALIGNED:'Aligned',MIXED:'Mixed',MISALIGNED:'Not aligned',UNKNOWN:'Not assessed'})[current.result.preference_alignment])}</h4>${current.result.preference_notes?`<p>${esc(current.result.preference_notes)}</p>`:''}</section>`:''}
+      <section class="capture-save"><h3>Save to Job Hunt</h3>
+      ${saved?`<div class="capture-saved" role="status"><strong>Saved to Job Hunt</strong><p>${esc(outcome(delivery))}</p><a href="${esc(delivery.origin)}" target="_blank" rel="noreferrer">Open Job Hunt ↗</a></div>`:`<p class="hint">${delivery?'Continues the original save. No new AI request.':current?'Read the assessment above, then save the posting and result.':'Assess first to save this job with its fit result.'}</p>
+      ${!connected?'<button id="capture-open-settings" class="text-button" '+disabled+'>Connect Job Hunt in Settings</button>':''}
+      <button id="tracker-save" class="button secondary full" ${busy || !canSave?'disabled':''}>${busy==='deliver'?'Saving…':delivery?'Retry save to Job Hunt':'Save to Job Hunt'}</button>
+      ${delivery?.error?`<p class="notice error">${esc(delivery.error)}</p>`:''}${delivery?.next_retry_at && Date.now()<delivery.next_retry_at?`<p class="hint">Try again after ${esc(new Date(delivery.next_retry_at).toLocaleTimeString())}.</p>`:''}
+      ${!delivery && !current?`<button id="tracker-save-unassessed" class="text-button" ${busy || !connected || this.owner.drafts.has(capture.id) || this.preferenceDraft?'disabled':''}>Save without assessment</button><p class="hint">Saves only the posting. This capture cannot gain a fit later.</p>`:''}`}
+      </section></section>`;
+  }
+  bind(app, task) {
+    const on=(selector,event,fn)=>app.querySelector(selector)?.addEventListener(event,fn);
+    const perform=(name,fn)=>task(name,async()=>{try{await fn();}finally{await this.reload();}});
+    on('#fit-resume','change',e=>perform('save',()=>this.runtime.setSelected(Number(e.target.value))));
+    on('#fit-preferences','input',e=>{
+      this.owner.transport.clear();this.preferenceDraft=true;this.preferenceDraftText=e.target.value;
     });
-    on('#fit-assess', 'click', () => assess(false)); on('#fit-compare', 'click', () => assess(true));
-    on('#fit-resume-jobs', 'click', () => perform('fit', () => this.queue.run()));
-    on('#fit-unassessed', 'click', () => perform('serialize', () => this.prepare(true)));
-    on('#tracker-connect-form', 'submit', e => { e.preventDefault(); const origin = app.querySelector('#tracker-origin').value, token = app.querySelector('#tracker-credential').value; perform('connect', () => this.delivery.connect(origin, token)); });
-    on('#tracker-disconnect', 'click', () => perform('connect', async () => {this.preferenceSync.stop();await this.delivery.disconnect();await workStore.remove('tracker-preferences')}));
-    on('#tracker-save', 'click', () => perform('deliver', () => this.saveToJobHunt(false)));
-    on('#tracker-save-unassessed', 'click', () => perform('deliver', () => this.saveToJobHunt(true)));
-    on('#tracker-freeze', 'click', () => perform('serialize', async () => {
-      if (this.preferenceDraft) throw new Error('Save preference edits first.');
-      const prepared = this.owner.transport.get(this.owner.current.id);
-      if (!prepared) throw new Error('Prepare and inspect a current offline request first.');
-      await this.freezeCurrent(prepared);
-    }));
-    app.querySelectorAll('[data-delivery-send]').forEach(button => button.addEventListener('click', () => perform('deliver', async () => { if (this.preferenceDraft) throw new Error('Save preference edits first.'); await this.delivery.send(button.dataset.deliverySend); })));
+    on('#fit-preferences-form','submit',e=>{e.preventDefault();const notes=app.querySelector('#fit-preferences').value;perform('save',async()=>{await workStore.set('fit-preferences',notes.trim()?{notes}:null);this.preferenceDraft=false;this.owner.transport.clear();});});
+    on('#fit-assess','click',()=>perform('fit',()=>this.assessCurrent()));
+    on('#tracker-connect-form','submit',e=>{e.preventDefault();const origin=app.querySelector('#tracker-origin').value,token=app.querySelector('#tracker-credential').value;perform('connect',()=>this.delivery.connect(origin,token));});
+    on('#tracker-disconnect','click',()=>perform('connect',async()=>{this.preferenceSync.stop();await this.delivery.disconnect();await workStore.remove('tracker-preferences');}));
+    on('#tracker-save','click',()=>perform('deliver',()=>this.saveToJobHunt(false)));
+    on('#tracker-save-unassessed','click',()=>perform('deliver',()=>this.saveToJobHunt(true)));
+    app.querySelectorAll('[data-delivery-send]').forEach(button=>button.addEventListener('click',()=>perform('deliver',async()=>{
+      if(this.preferenceDraft)throw new Error('Save preference edits first.');
+      await this.delivery.send(button.dataset.deliverySend);
+    })));
   }
 }
