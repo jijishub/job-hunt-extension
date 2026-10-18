@@ -12,6 +12,8 @@
     "test:capture:live": "node tests/capture-live.mjs",
     "test:tracker": "node tests/tracker-interop.mjs",
     "test:role-fit": "node tests/role-fit-browser.mjs",
+    "test:capture:flow": "node tests/capture-flow-browser.mjs",
+    "test:linkedin:title": "node tests/linkedin-title-browser.mjs",
     "test:postings": "node tests/posting-adapters-browser.mjs",
     "test:postings:live": "node tests/posting-adapters-live.mjs",
     "test:linkedin:live": "node tests/linkedin-current-live.mjs",

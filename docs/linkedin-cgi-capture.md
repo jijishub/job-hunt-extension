@@ -10,6 +10,14 @@ The supplied [CGI posting](https://cgi.njoyn.com/corp/xweb/xweb.asp?CLID=21001&p
 
 ## Selection, timing and evidence
 
+### Salary chip mistaken for role title (extractor v8)
+
+A later screenshot showed `70K PHP/month - 95K PHP/month` in Role title and an empty company field, despite the visible AI Developer / Offshorly header. This is deterministic extraction, not AI output. A screenshot-inspired fixture reproduced both wrong values under v7 when the salary chip was exposed as a heading: title selection accepted it and header scope stopped at the employment/work-model chips, missing the company link. The exact signed-in DOM was not supplied, so this reproduction does not establish the page's actual element types.
+
+V8 rejects explicit currency/amount text across LinkedIn title paths, supports prominent strong/b titles, and keeps header traversal within the safe posting card instead of stopping at its metadata row. PHP Developer, PHP 8 Developer and PHP Developer (100% Remote) remain valid titles. If no safe title is recognized, it stays unknown and blocks assessment. This does not infer or add normalized salary amounts, dismiss completeness warnings, change the transport contract, click Apply or navigate to an employer.
+
+`npm run test:linkedin:title` passed 18 offline Chromium cases covering heading/span salary chips, missing-title blocking, original paragraph/semantic layouts, selected-pane changes and stale-description rejection. The same salary-heading fixture also passed the isolated installed-extension capture/review path in `npm run test:capture:flow`, producing AI Developer / Offshorly without an AI request or upload. All 49 unit tests passed. Actual signed-in LinkedIn behavior remains unverified; the fixture is explicitly synthetic. The installed `build/` hash stayed unchanged.
+
 ### Non-heading title and end-to-end acceptance follow-up (extractor v7)
 
 The next screenshots showed that v6 still saved job `4475427660` without its visible title. The v6 fixture explicitly expected that null title: it validated metadata recovery but did not establish a successful capture/review/assessment workflow for the user's visible title. That expectation is now replaced with a required full title, **Automation Support Engineer ( Remote | Philippines)**.

@@ -46,7 +46,7 @@ npm run dev
 npm run build
 ```
 
-The web preview has separate data and cannot read other tabs. The installed extension needs no separate hosting deployment. `npm run` lists available checks. Build success does not verify production authentication or live layouts; multi-tab behavior has not been live-verified by the extension agent. The latest UI simplification is source-only: no rebuild, test-suite run or deployment was performed, preserving the installed live extension.
+The web preview has separate data and cannot read other tabs. The installed extension needs no separate hosting deployment. `npm run` lists available checks. The latest UI passed 49 unit checks and `npm run test:capture:flow`, using a temporary extension build/profile, mocked AI and an isolated tracker. Tab activation is exercised with controlled active-tab reads. Production authentication, live posting layouts and the native side-panel surface remain unverified; your installed build was left unchanged.
 
 Details: [capture evidence](docs/extraction-pilot.md), [LinkedIn / CGI](docs/linkedin-cgi-capture.md), [role fit](docs/extension-role-fit.md), [preferences](docs/live-preferences.md), [offline contract](docs/offline-transport.md), [tracker handoff](docs/job-hunt-production-handoff.md).
 

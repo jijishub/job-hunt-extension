@@ -2,7 +2,7 @@
 // Reads the current document. LinkedIn capture may expand only its description
 // button and wait for the selected pane. Never follows Apply or calls an API.
 export async function extractPosting(options = {}) {
-  const version = 'posting-pilot-v7';
+  const version = 'posting-pilot-v8';
   const maxText = 120000;
   const warnings = [];
   const promotionalContent = '.jobs-premium-applicant-insights, .job-details-how-you-match, [data-testid="premium-upsell"], [data-ad], .ad-banner-container';
@@ -88,16 +88,24 @@ export async function extractPosting(options = {}) {
       .map(n => clean(n.textContent).replace(/^[✓✔☑\s]+/, '').replace(/[‐‑–]/g, '-'));
   }
   const hasHeaderFacts = node => factValues(node).some(value => model(value) || jobType(value));
+  // Compensation chips can have heading roles too. They are never role titles.
+  // Require adjacent currency/amount evidence so PHP Developer / PHP 8 Developer
+  // and titles containing unrelated experience/version numbers remain eligible.
+  const currency = '(?:PHP|USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|INR|MYR|AED)';
+  const amount = '(?:\\d[\\d,.]*\\s*[kKmM]|\\d{1,3}(?:[, .]\\d{3})+(?:[.,]\\d+)?|\\d{3,}(?:[.,]\\d+)?)';
+  const moneyAmount = new RegExp('(?:\\b'+currency+'\\s*'+amount+'\\b|\\b'+amount+'\\s*'+currency+'\\b)', 'i');
+  const periodicPay = new RegExp('(?:\\b'+currency+'\\s*\\d[\\d,.]*|\\d[\\d,.]*\\s*'+currency+'\\b)\\s*(?:/|per\\s+)(?:hour|hr|day|week|month|year|annum)\\b', 'i');
+  const salaryText = value => /[$€£₱¥₹]\s*\d/.test(value) || moneyAmount.test(value) || periodicPay.test(value);
   const safeHeader = (node, about) => !node.contains(about) && !node.querySelector(neighborContent + ', ' + promotionalContent) &&
     ![...node.querySelectorAll(headingsSelector)].some(n => /^(?:use ai|people you|similar jobs|recommended jobs|job search smarter)/i.test(clean(n.textContent)));
   function headerFor(heading, root, about) {
-    let companyCard = null;
+    let companyCard = null, factsCard = null;
     for (let node = heading?.parentElement; node && node !== root; node = node.parentElement) {
       if (!safeHeader(node, about)) break;
-      if (hasHeaderFacts(node)) return node;
-      if (!companyCard && [...node.querySelectorAll('a[href*="/company/"]')].some(usable)) companyCard = node;
+      if (hasHeaderFacts(node)) factsCard = node;
+      if ([...node.querySelectorAll('a[href*="/company/"]')].some(usable)) companyCard = node;
     }
-    if (heading) return companyCard || heading.parentElement;
+    if (heading) return companyCard || factsCard || heading.parentElement;
     // A visible title may use an unrecognized element. Locate its metadata card
     // independently, bounded before About the job and outside other cards.
     if (!about) return null;
@@ -109,11 +117,11 @@ export async function extractPosting(options = {}) {
   function titleFromHeader(header, expectedId) {
     if (!header) return null;
     const companies = new Set([...header.querySelectorAll('a[href*="/company/"]')].map(n => clean(n.textContent)));
-    const candidates = [...header.querySelectorAll('p,span,div,a,[data-testid="job-title"],[itemprop="title"]')].filter(node => {
+    const candidates = [...header.querySelectorAll('p,span,div,a,strong,b,h1,h2,[role="heading"],[data-testid="job-title"],[itemprop="title"]')].filter(node => {
       const text = clean(node.textContent);
       return usable(node) && !node.closest('a[href*="/company/"],button,nav,aside,[role="button"]') &&
         !node.querySelector('p,div,h1,h2,h3,ul,ol,button,input') && text.length >= 3 && text.length <= 500 &&
-        !companies.has(text) && !model(text) && !jobType(text) && !/·/.test(text) &&
+        !companies.has(text) && !model(text) && !jobType(text) && !salaryText(text) && !/·/.test(text) &&
         !/^(?:apply|save|saved|share|more|view job|view full job|show more|see more)$/i.test(text) &&
         !/applicant|clicked apply|promoted by|responses managed|\bago\b|premium/i.test(text);
     });
@@ -141,9 +149,9 @@ export async function extractPosting(options = {}) {
       (node.querySelector(descriptionSelector) || [...node.querySelectorAll(headingsSelector)].some(aboutHeading)));
     const root = roots[0] || identified || (location.pathname.includes('/jobs/view/') ? document.querySelector('main, [role="main"]') : null);
     const semantic = semanticDescription(root);
-    let heading = [...(root?.querySelectorAll(titleSelector) || [])].find(usable);
+    let heading = [...(root?.querySelectorAll(titleSelector) || [])].find(node=>usable(node) && !salaryText(clean(node.textContent)));
     if (!heading) {
-      const possible = [...(root?.querySelectorAll(headingsSelector) || [])].filter(node => usable(node) && !aboutHeading(node) &&
+      const possible = [...(root?.querySelectorAll(headingsSelector) || [])].filter(node => usable(node) && !aboutHeading(node) && !salaryText(clean(node.textContent)) && !model(clean(node.textContent)) && !jobType(clean(node.textContent)) &&
         (!semantic.about || !!(node.compareDocumentPosition(semantic.about) & Node.DOCUMENT_POSITION_FOLLOWING)) &&
         !/^(?:use ai|people you|similar jobs|recommended jobs|job search smarter|jobs|search results|premium)/i.test(clean(node.textContent)) && !node.closest('a[href*="/company/"]'));
       heading = possible.find(node => [...(headerFor(node, root, semantic.about)?.querySelectorAll('a[href*="/company/"]') || [])].some(a => usable(a) && clean(a.textContent) !== clean(node.textContent))) ||
