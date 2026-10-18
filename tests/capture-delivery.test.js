@@ -19,8 +19,9 @@ async function harness() {
   return { d, store, prepared, record, requests, advance: () => { now += 400000; }, account: v => { account = v; }, handler: fn => { handler = fn; } };
 }
 
-test('production origins and redirects are prohibited; credentials remain separate from frozen payloads', async () => {
-  for (const url of ['https://jobhunt.jizellecasia.site', 'https://example.com', 'http://localhost.evil.test', 'http://user:secret@localhost', 'file:///local', 'http://127.0.0.1/path']) assert.throws(() => localTrackerOrigin(url));
+test('only canonical Job Hunt and loopback origins are allowed; redirects and credential leakage are prohibited', async () => {
+  for (const url of ['http://jobhunt.jizellecasia.site', 'https://example.com', 'https://jobhunt.jizellecasia.site.evil.test', 'http://localhost.evil.test', 'http://user:secret@localhost', 'file:///local', 'http://127.0.0.1/path']) assert.throws(() => localTrackerOrigin(url));
+  assert.equal(localTrackerOrigin('https://jobhunt.jizellecasia.site'), 'https://jobhunt.jizellecasia.site');
   assert.equal(localTrackerOrigin('http://localhost:3000'), 'http://localhost:3000');
   const h = await harness(); await h.d.send(h.record.id);
   for (const req of h.requests) { assert.equal(req.redirect, 'error'); assert.equal(req.credentials, 'omit'); assert.equal(req.headers.Authorization, 'Bearer SEPARATE_TRACKER_TOKEN'); }

@@ -1,5 +1,13 @@
 # Extension role-fit pilot
 
+## Production integration update
+
+The owner has now authorized production integration. `capture-delivery.js` allows only `https://jobhunt.jizellecasia.site` and loopback development origins, rejects redirects and foreign origins, and consumes the tracker's authoritative `expires_at`. Production connection requires that expiry field. Historical loopback-only descriptions below refer to the earlier pilot.
+
+The Capture panel now offers scoped credential connection, **Assess & save to Job Hunt** (reuse a current fit or assess once), **Save posting + fit to Job Hunt**, **Save without assessment**, immutable delivery continuation and explicit receipts. Single-action saving binds the initially connected account/origin through preparation; changes pause delivery. Existing results/inputs/evidence remain local until the user saves. An existing frozen request is continued before any AI work. No-fit saves preserve warning state and cannot later be silently upgraded under the same UUID.
+
+The tracker contract now includes authoritative credential expiry, resolving the earlier expiry-field limitation below. Tracker production deployment/migrations and credential issuance still need completion/confirmation by the tracker agent; see the [handoff prompt](job-hunt-production-handoff.md). No production token or upload has been used. Per the owner's instruction, no test suites were run for this integration change; prior suite results below are historical and do not verify these changes.
+
 The later [LinkedIn/CGI capture update](linkedin-cgi-capture.md) adds selected-pane extraction and explicit completeness confirmation without changing assessment attachment or delivery restrictions.
 
 Implements the supplied extension-side pivot against the sibling tracker's `EXTENSION-CAPTURE-CONTRACT.md`, including its final reconciliation decisions and extension-generated assessment section, inspected on 2026-10-18. No tracker source is modified. Production deployment/migrations are pending and every tracker request is restricted in code to an HTTP/HTTPS loopback origin with no path, credentials, query or fragment. Redirects are rejected. Gateway traffic is separate and uses the configured provider normally.

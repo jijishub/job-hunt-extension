@@ -3,7 +3,7 @@ import { loadCaptures } from './capture-storage.js';
 import { workStore } from './local-work-store.js';
 import { makeFitInputs, PROMPT_VERSION, canonicalJSON } from './role-fit.js';
 import { RoleFitQueue } from './role-fit-queue.js';
-import { CaptureDelivery } from './capture-delivery.js';
+import { CaptureDelivery, JOB_HUNT_ORIGIN } from './capture-delivery.js';
 import { serializeCapture } from './capture-transport.js';
 import { serializeAssessedCapture } from './assessed-capture.js';
 
@@ -56,6 +56,39 @@ export class CaptureFitPanel {
     for (const job of await this.queue.jobs()) if (job.inputs.capture_id === id) await workStore.remove('fit-job:' + job.id);
     await workStore.remove('capture-delivery:' + id); await this.reload();
   }
+  async freezeCurrent(prepared, expectedConnection = null) {
+    if (this.preferenceDraft) throw new Error('Save preference edits first.');
+    const current = await this.prepare(!prepared.payload.extension_assessment);
+    if (current.json !== prepared.json) { this.owner.transport.delete(this.owner.current.id); throw new Error('Inputs changed since preparation. Prepare a fresh request.'); }
+    const base = await serializeCapture(this.owner.current), hasFit = !!prepared.payload.extension_assessment;
+    return this.delivery.freeze(prepared, { review_hash: this.owner.current.review_basis_hash, capture_json: JSON.stringify(base.payload), inputs: hasFit ? await this.inputs() : null }, expectedConnection);
+  }
+  async saveToJobHunt(unassessed = false) {
+    const capture = this.owner.current;
+    if (!capture || this.owner.drafts.has(capture.id) || this.preferenceDraft) throw new Error('Save current corrections, review and preferences first.');
+    const connection = await this.delivery.connection();
+    if (!connection?.verified || Date.now() >= connection.expires_at) throw new Error('Connect Job Hunt with a current tracker credential first.');
+    // A frozen or delivered capture is immutable. Continue that delivery before
+    // doing any AI work; never change its bytes or manufacture a new capture ID.
+    const existing = (await this.delivery.records()).find(r => r.id === capture.id);
+    if (existing) {
+      if (unassessed && JSON.parse(existing.body).extension_assessment) throw new Error('The frozen request includes a fit. Use Continue saved delivery to send that exact request; it cannot be changed to Unassessed under the same capture ID.');
+      return this.delivery.send(existing.id);
+    }
+    const verified = await this.delivery.verify(connection.origin, connection.credential);
+    if (verified.account.id !== connection.account.id) throw new Error('The connected Job Hunt account changed. Reconnect the intended account before saving.');
+    if (!unassessed) {
+      if (verified.capabilities.extension_assessments !== true) throw new Error('This Job Hunt server does not accept extension fit results yet. Deploy the current capture API or save without assessment.');
+      const inputs = await this.inputs(); // Includes current identity/completeness validation.
+      if (!(await this.queue.jobs()).some(j => this.matches(j, capture))) {
+        const job = await this.queue.enqueue(inputs); await this.queue.run([job.id]);
+      }
+      await this.reload();
+      if (!this.jobs.some(j => this.matches(j, capture))) throw new Error('Assessment did not complete for the current inputs. The capture is still local. Review the assessment error, retry explicitly, or choose Save without assessment.');
+    }
+    const prepared = await this.prepare(unassessed), frozen = await this.freezeCurrent(prepared, { origin: connection.origin, account_id: connection.account.id });
+    return this.delivery.send(frozen.id);
+  }
   async deliveryGuard(record) {
     const capture = (await loadCaptures()).find(c => c.id === record.id);
     if (!capture || this.owner.drafts.has(record.id)) return false;
@@ -74,7 +107,7 @@ export class CaptureFitPanel {
     const jobs = this.jobs.filter(j => j.inputs.capture_id === capture.id);
     const c = this.connection;
     return `<section class="card capture-fit"><h2>Fit against your resume</h2>
-      <p class="hint">On your click, your configured AI provider receives this reviewed posting, the complete selected resume text and any explicit preferences below. Model inference runs at that provider. Results and queue stay in this browser until a separate local test delivery.</p>
+      <p class="hint">On your click, your configured AI provider receives this reviewed posting, the complete selected resume text and any explicit preferences below. Model inference runs at that provider. Results stay in this browser until you save to Job Hunt.</p>
       <label class="label" for="fit-resume">RESUME YOU INTEND TO APPLY WITH</label><select id="fit-resume" ${disabled}>${s.resumes.map((r, i) => `<option value="${i}" ${s.selected === i ? 'selected' : ''}>${esc(r?.name || `Version ${i + 1} (empty)`)}</option>`).join('')}</select>
       <form id="fit-preferences-form"><label class="label" for="fit-preferences">OPTIONAL EXPLICIT PREFERENCES</label><textarea id="fit-preferences" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft ? this.preferenceDraftText : this.preferences?.notes || '')}</textarea><p class="hint">For example: location, work model or salary with currency and period. Profile fields are not used as preferences. Blank means UNKNOWN.</p><button class="text-button" ${disabled}>Save preferences locally</button></form>
       <div class="button-row"><button id="fit-assess" class="button primary" ${disabled}>Assess selected resume</button><button id="fit-compare" class="button secondary" ${disabled}>Compare saved resumes</button></div>
@@ -85,11 +118,11 @@ export class CaptureFitPanel {
       ${this.jobs.some(j => ['queued', 'interrupted'].includes(j.state)) ? `<button id="fit-resume-jobs" class="text-button" ${disabled}>Resume pending assessments</button>` : ''}
       <button id="fit-unassessed" class="text-button" ${disabled}>Prepare as Unassessed</button>
       <p class="hint">A failed new attempt preserves the last successful result when its inputs still match. Preparing or retrying delivery never calls AI.</p></section>
-      <section class="card capture-deliveries"><h2>Local tracker test connection</h2><p class="hint">Production uploads are disabled. Only a loopback tracker is allowed while deployment and migrations are pending. Use a separate 24-hour credential from that tracker's My preferences → Job Hunt extension.</p>
-      ${c ? `<p>${esc(c.account.email)} · ${esc(c.origin)} · ${c.verified && Date.now() < c.expires_at ? 'Verified for local testing' : 'Reconnect required'}</p>` : ''}
-      <form id="tracker-connect-form"><label class="label" for="tracker-origin">LOCAL TRACKER ORIGIN</label><input id="tracker-origin" type="url" value="${esc(c?.origin || 'http://127.0.0.1:3000')}" required ${disabled}><label class="label" for="tracker-credential">TRACKER CREDENTIAL</label><input id="tracker-credential" type="password" autocomplete="off" required ${disabled}><button class="button secondary full" ${disabled}>Verify local connection</button></form>
-      ${c ? `<button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect tracker</button><button id="tracker-freeze" class="button secondary full" ${disabled}>Freeze prepared request for local delivery</button>` : ''}
-      ${this.deliveries.map(r => `<article><h3>Delivery ${esc(r.id)}</h3><p>${esc(r.origin)} · account ${esc(r.account_id)} · ${esc(r.state)}</p><p>${esc(r.error || '')}</p>${r.validation ? `<pre>${esc(JSON.stringify(r.validation, null, 2))}</pre>` : ''}${r.receipt ? `<p>${r.receipt.extension_assessment?.disposition === 'applied' ? 'Extension fit applied to the new lead.' : r.receipt.extension_assessment?.disposition === 'stored_only' ? 'Fit stored in capture history. Existing opening rating and edits were preserved.' : 'Capture saved without a supplied fit.'}</p>` : `<button data-delivery-send="${esc(r.id)}" class="text-button" ${disabled}>Check / send frozen local request</button>`}<details><summary>Frozen request and receipt</summary><pre>${esc(r.body)}</pre><pre>${esc(JSON.stringify(r.receipt, null, 2))}</pre></details></article>`).join('')}</section>`;
+      <section class="card capture-deliveries"><h2>Save to Job Hunt</h2><p class="hint">Connect your Job Hunt account using a separate credential from <a href="${JOB_HUNT_ORIGIN}" target="_blank" rel="noreferrer">My preferences → Job Hunt extension</a>. Paste that credential here, never your AI gateway key. Your posting, original evidence and chosen fit are saved together; Job Hunt does not run AI again.</p>
+      ${c ? `<p>${esc(c.account.email)} · ${esc(c.origin)} · ${c.verified && Date.now() < c.expires_at ? 'Connected' : 'Reconnect required'}<br>Credential expires: ${esc(new Date(c.expires_at).toLocaleString())}</p>` : ''}
+      <form id="tracker-connect-form"><label class="label" for="tracker-origin">JOB HUNT SERVER</label><input id="tracker-origin" type="url" value="${esc(c?.origin || JOB_HUNT_ORIGIN)}" required ${disabled}><label class="label" for="tracker-credential">JOB HUNT CREDENTIAL</label><input id="tracker-credential" type="password" autocomplete="off" required ${disabled}><button class="button secondary full" ${disabled}>Connect Job Hunt</button></form>
+      ${c ? `<button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect tracker</button><button id="tracker-save" class="button primary full" ${disabled}>${this.deliveries.some(r=>r.id===capture.id) ? 'Continue saved delivery' : current ? 'Save posting + fit to Job Hunt' : 'Assess & save to Job Hunt'}</button><button id="tracker-save-unassessed" class="text-button" ${disabled}>Save without assessment</button><p class="hint">Saving with fit sends the selected resume to your AI provider only if a current result is needed. Saving without assessment makes no AI request and may create a draft or a role needing review. A capture saved without fit cannot have a fit added later through this API.</p><details><summary>Advanced delivery</summary><button id="tracker-freeze" class="button secondary full" ${disabled}>Freeze prepared request</button></details>` : ''}
+      ${this.deliveries.map(r => `<article><h3>${r.state === 'delivered' ? 'Saved to Job Hunt' : 'Delivery: ' + esc(r.state)}</h3><p>${esc(r.origin)} · account ${esc(r.account_id)}<br>Capture ${esc(r.id)}</p><p>${esc(r.error || '')}</p>${r.validation ? `<pre>${esc(JSON.stringify(r.validation, null, 2))}</pre>` : ''}${r.receipt ? `<p>${r.receipt.record_deleted ? 'The capture was received, but its linked role was deleted. No role was recreated.' : r.receipt.disposition === 'draft' ? 'Capture saved as a draft. Complete the job identity to create a role.' : r.receipt.extension_assessment?.disposition === 'applied' ? 'Posting and extension fit saved to the new Not started role.' : r.receipt.extension_assessment?.disposition === 'stored_only' ? 'Fit stored in capture history. The existing role and its rating were preserved.' : 'Capture saved without a fit. Review warnings remain recorded.'}</p><a href="${esc(r.origin)}" target="_blank" rel="noreferrer">Open Job Hunt</a>` : `<button data-delivery-send="${esc(r.id)}" class="text-button" ${disabled}>Retry / check delivery</button>`}<details><summary>Frozen request and receipt</summary><pre>${esc(r.body)}</pre><pre>${esc(JSON.stringify(r.receipt, null, 2))}</pre></details></article>`).join('')}</section>`;
   }
   bind(app, task, refresh) {
     const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
@@ -112,14 +145,13 @@ export class CaptureFitPanel {
     on('#fit-unassessed', 'click', () => perform('serialize', () => this.prepare(true)));
     on('#tracker-connect-form', 'submit', e => { e.preventDefault(); const origin = app.querySelector('#tracker-origin').value, token = app.querySelector('#tracker-credential').value; perform('connect', () => this.delivery.connect(origin, token)); });
     on('#tracker-disconnect', 'click', () => perform('connect', () => this.delivery.disconnect()));
+    on('#tracker-save', 'click', () => perform('deliver', () => this.saveToJobHunt(false)));
+    on('#tracker-save-unassessed', 'click', () => perform('deliver', () => this.saveToJobHunt(true)));
     on('#tracker-freeze', 'click', () => perform('serialize', async () => {
       if (this.preferenceDraft) throw new Error('Save preference edits first.');
       const prepared = this.owner.transport.get(this.owner.current.id);
       if (!prepared) throw new Error('Prepare and inspect a current offline request first.');
-      const current = await this.prepare(!prepared.payload.extension_assessment);
-      if (current.json !== prepared.json) { this.owner.transport.delete(this.owner.current.id); throw new Error('Inputs changed since preparation. Prepare and inspect a fresh request.'); }
-      const base = await serializeCapture(this.owner.current), hasFit = !!prepared.payload.extension_assessment;
-      await this.delivery.freeze(prepared, { review_hash: this.owner.current.review_basis_hash, capture_json: JSON.stringify(base.payload), inputs: hasFit ? await this.inputs() : null });
+      await this.freezeCurrent(prepared);
     }));
     app.querySelectorAll('[data-delivery-send]').forEach(button => button.addEventListener('click', () => perform('deliver', async () => { if (this.preferenceDraft) throw new Error('Save preference edits first.'); await this.delivery.send(button.dataset.deliverySend); })));
   }

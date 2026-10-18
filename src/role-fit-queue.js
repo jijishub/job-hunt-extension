@@ -15,9 +15,9 @@ export class RoleFitQueue {
       }
     });
   }
-  async run() {
+  async run(jobIds = null) {
     return oneAtATime('job-hunt-role-fit', async () => {
-      const jobs = (await this.jobs()).reverse().filter(j => ['queued', 'interrupted'].includes(j.state));
+      const jobs = (await this.jobs()).reverse().filter(j => ['queued', 'interrupted'].includes(j.state) && (!jobIds || jobIds.includes(j.id)));
       for (const job of jobs) {
         if (!await this.store.get('fit-job:' + job.id)) continue;
         try {

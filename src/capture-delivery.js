@@ -1,37 +1,44 @@
-// Pilot safety boundary: every tracker request is restricted to loopback.
+// Tracker credentials may go only to the canonical Job Hunt origin or loopback.
 // This module never imports or calls the AI queue.
 import { workStore, oneAtATime } from './local-work-store.js';
 import { sha256 } from './role-fit.js';
-export function localTrackerOrigin(value) {
+export const JOB_HUNT_ORIGIN = 'https://jobhunt.jizellecasia.site';
+export function trackerOrigin(value) {
   const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Production uploads are disabled. Use an isolated loopback tracker origin.');
+  const loopback = ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  if ((!loopback && url.origin !== JOB_HUNT_ORIGIN) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Use https://jobhunt.jizellecasia.site or a loopback Job Hunt server. Other origins cannot receive tracker credentials.');
   return url.origin;
 }
+export const localTrackerOrigin = trackerOrigin;
 const terminal = new Set(['delivered', 'stopped', 'conflict', 'too_large', 'validation_error']);
 export class CaptureDelivery {
   constructor({ store = workStore, fetcher = (...args) => fetch(...args), now = () => Date.now(), guard = async () => true } = {}) { Object.assign(this, { store, fetcher, now, guard }); }
   async records() { return (await this.store.list('capture-delivery:')).sort((a, b) => b.created_at.localeCompare(a.created_at)); }
   async connection() { return this.store.get('tracker-connection'); }
   async request(origin, path, credential, options = {}) {
-    const allowed = localTrackerOrigin(origin);
+    const allowed = trackerOrigin(origin);
     return this.fetcher(allowed + path, { ...options, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000),
       headers: { ...options.headers, Authorization: `Bearer ${credential}` } });
   }
   async verify(origin, credential) {
+    origin = trackerOrigin(origin);
     if (typeof credential !== 'string' || !credential.trim()) throw new Error('Enter a separate tracker credential from My preferences → Job Hunt extension.');
     const response = await this.request(origin, '/api/v1/connection', credential);
-    if (!response.ok) throw new Error(`Tracker connection returned ${response.status}. Reconnect or check access.`);
+    if (!response.ok) throw new Error(response.status === 404 ? 'The Job Hunt capture API is not deployed at this address yet. Deploy the tracker integration first.' : response.status === 401 ? 'The Job Hunt credential is invalid or expired. Create a new credential in My preferences → Job Hunt extension.' : `Job Hunt connection returned ${response.status}. Reconnect or check access.`);
+    if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('Job Hunt returned a web page instead of the capture API. Deploy the API and check authentication/proxy routing.');
     const data = await response.json();
     if (!data.account?.id || typeof data.account.id !== 'string' || typeof data.account.email !== 'string' || data.capabilities?.capture_uploads !== true ||
       !data.capabilities.schema_versions?.includes(1) || !Number.isSafeInteger(data.limits?.max_capture_bytes) || data.limits.max_capture_bytes < 1 ||
       !Number.isSafeInteger(data.limits.max_status_ids) || data.limits.max_status_ids < 1) throw new Error('Tracker connection capability response is incompatible.');
+    if (data.expires_at != null && (typeof data.expires_at !== 'string' || !Number.isFinite(Date.parse(data.expires_at)) || Date.parse(data.expires_at) <= this.now())) throw new Error('The Job Hunt credential has expired or has an invalid expiration. Create a new credential.');
+    if (origin === JOB_HUNT_ORIGIN && !data.expires_at) throw new Error('The production Job Hunt API must return the credential expires_at field. Deploy the current capture API first.');
     return data;
   }
   async connect(origin, credential) {
-    origin = localTrackerOrigin(origin);
+    origin = trackerOrigin(origin);
     const data = await this.verify(origin, credential), old = await this.connection();
-    const connection = { origin, credential, ...data, verified_at: new Date(this.now()).toISOString(),
-      expires_at: old?.credential === credential && old.origin === origin ? Math.min(old.expires_at, this.now() + 86400000) : this.now() + 86400000, verified: true };
+    const connection = { origin, credential, account: data.account, capabilities: data.capabilities, limits: data.limits, verified_at: new Date(this.now()).toISOString(),
+      expires_at: data.expires_at ? Date.parse(data.expires_at) : old?.credential === credential && old.origin === origin ? Math.min(old.expires_at, this.now() + 86400000) : this.now() + 86400000, verified: true };
     await this.store.set('tracker-connection', connection);
     for (const record of await this.records()) if (!terminal.has(record.state) && (record.origin !== origin || record.account_id !== data.account.id)) {
       record.state = 'paused'; record.error = 'Connected account/origin changed. This frozen delivery belongs to another account.'; await this.save(record);
@@ -43,10 +50,11 @@ export class CaptureDelivery {
     for (const record of await this.records()) if (!terminal.has(record.state)) { record.state = 'paused'; record.error = 'Disconnected. Reconnect the same account and origin.'; await this.save(record); }
   }
   async save(record) { await this.store.set('capture-delivery:' + record.id, record); return record; }
-  async freeze(prepared, guard) {
+  async freeze(prepared, guard, expectedConnection = null) {
     const c = await this.connection();
-    if (!c?.verified || this.now() >= c.expires_at) throw new Error('Verify a current local tracker connection before freezing delivery.');
-    localTrackerOrigin(c.origin);
+    if (!c?.verified || this.now() >= c.expires_at) throw new Error('Connect Job Hunt with a current credential before saving.');
+    if (expectedConnection && (c.origin !== expectedConnection.origin || c.account.id !== expectedConnection.account_id)) throw new Error('The connected Job Hunt account changed during preparation. Nothing was uploaded; reconnect the intended account.');
+    trackerOrigin(c.origin);
     if (JSON.stringify(JSON.parse(prepared.json)) !== JSON.stringify(prepared.payload) || new TextEncoder().encode(prepared.json).byteLength !== prepared.bytes) throw new Error('Prepared request content/byte count changed. Prepare it again.');
     if (prepared.bytes > c.limits.max_capture_bytes) throw new Error('The tracker byte limit is smaller than this request. The complete capture remains local.');
     if (prepared.payload.extension_assessment && c.capabilities.extension_assessments !== true) throw new Error('This tracker does not accept extension assessments.');
