@@ -10,6 +10,16 @@ The supplied [CGI posting](https://cgi.njoyn.com/corp/xweb/xweb.asp?CLID=21001&p
 
 ## Selection, timing and evidence
 
+### Missing-title diagnostics follow-up (extractor v5)
+
+User-supplied v4 diagnostics for job `4475426687` showed a recognized root, matching URL/header IDs, **About the job**, and 3,128 description characters, but `title_found: false`. The exact live DOM remains unavailable. Inspection of the fallback found that an `h2` could be rejected when the company link lived outside its ancestor card. V5 accepts a unique primary heading before **About the job** without that company-link requirement. Multiple competing headings remain unknown; it does not guess a title from description text or browser page title.
+
+Missing title recognition no longer discards an otherwise stable, identified description. The extension saves the source locally with a null title and the existing `missing_role_title` blocker. The user must correct it before assessment/application creation; the original source and historical warning remain. The final installed-extension guard still verifies the exact body text, visibility, root containment and matching job IDs, while requiring a title match only when a title was extracted. Mismatched IDs, loading text, prior-selection descriptions and changes during capture remain rejected.
+
+The new `linkedin-missing-title.html` is a synthetic reproduction of the diagnostic conditions, not the user's actual DOM or posting text. Regression checks cover separate company/title containers, ambiguous headings, source preservation with a missing title, current assessment blocking, saved correction, historical-warning retention, stale-body rejection, mismatched IDs and a job-ID change between extraction and final saving. No transport contract fields or production-upload restrictions change.
+
+Completed v5 checks: production build, all 49 unit tests, installed capture suite and final installed posting-adapter suite, including the missing-title guard regressions and CGI acceptance against isolated actual tracker routes. Live signed-in verification remains outstanding.
+
 ### Loaded signed-in page follow-up (extractor v4)
 
 A subsequent screenshot of [Backend Developer at NCS Group](https://www.linkedin.com/jobs/view/4475878761/) showed a fully loaded signed-in page returning the old combined missing/loading/mismatched-description message. The user confirmed **About the job** was already present. This establishes that waiting is not an adequate diagnosis. The actual signed-in DOM was not accessible, so a specific failing selector has not been verified on that account.

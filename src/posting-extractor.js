@@ -2,7 +2,7 @@
 // Reads the current document. LinkedIn capture may expand only its description
 // button and wait for the selected pane. Never follows Apply or calls an API.
 export async function extractPosting(options = {}) {
-  const version = 'posting-pilot-v4';
+  const version = 'posting-pilot-v5';
   const maxText = 120000;
   const warnings = [];
   const promotionalContent = '.jobs-premium-applicant-insights, .job-details-how-you-match, [data-testid="premium-upsell"], [data-ad], .ad-banner-container';
@@ -103,6 +103,14 @@ export async function extractPosting(options = {}) {
         !/^(?:use ai|people you|similar jobs|recommended jobs|job search smarter|jobs|search results|premium)/i.test(clean(node.textContent)) && !node.closest('a[href*="/company/"]'));
       heading = possible.find(node => [...(headerFor(node, root, semantic.about)?.querySelectorAll('a[href*="/company/"]') || [])].some(a => usable(a) && clean(a.textContent) !== clean(node.textContent))) ||
         possible.find(node => node.matches('h1'));
+      // A company link may live in a separate card. Accept one unambiguous
+      // primary heading before About the job; never choose among competing titles.
+      if (!heading && semantic.about) {
+        const primary = possible.filter(node => node.matches('h2,[role="heading"]') && !node.closest('nav,aside,button') &&
+          !node.querySelector(headingsSelector) && clean(node.textContent) && clean(node.textContent).length <= 500 &&
+          (!node.hasAttribute('aria-level') || ['1','2'].includes(node.getAttribute('aria-level'))));
+        if (primary.length === 1) heading = primary[0];
+      }
     }
     const header = headerFor(heading, root, semantic.about);
     const link = heading?.matches('a[href]') ? heading : heading?.querySelector('a[href*="/jobs/view/"]');
@@ -150,11 +158,11 @@ export async function extractPosting(options = {}) {
       // Retain only a comparison signature; never serve a cached description.
       const previousBody = prior && prior.id !== context.id && prior.text === context.text;
       lastContext = context;
-      lastReason = !context.root || !context.heading || !context.body ? 'layout_unrecognized' : context.mismatch ? 'identity_mismatch' : loading ? 'description_loading' : previousBody || rejectedBodies.has(context.text) ? 'previous_selection_text' : 'description_changing';
+      lastReason = context.mismatch ? 'identity_mismatch' : !context.root || !context.body ? 'layout_unrecognized' : loading ? 'description_loading' : previousBody || rejectedBodies.has(context.text) ? 'previous_selection_text' : 'description_changing';
       if (context.mismatch && context.text.trim() && rejectedBodies.size < 10) rejectedBodies.add(context.text);
-      const button = !expansionAttempted && context.id && context.title && !context.mismatch && moreButton(context);
+      const button = !expansionAttempted && context.id && !context.mismatch && moreButton(context);
       if (button) { expansionAttempted = true; button.click(); stable = ''; stableSince = 0; }
-      else if (context.id && context.title && !context.mismatch && !loading && !previousBody && !rejectedBodies.has(context.text)) {
+      else if (context.id && context.root && context.body && usable(context.body) && !context.mismatch && !loading && !previousBody && !rejectedBodies.has(context.text)) {
           const signature = [context.id, context.title, context.header?.textContent || '', context.text].join('\u0000');
           if (signature !== stable) { stable = signature; stableSince = Date.now(); }
           // Some layouts expose no ID on the body itself. Give header/body
@@ -169,7 +177,7 @@ export async function extractPosting(options = {}) {
       const messages = {
         layout_unrecognized: 'LinkedIn may already be fully loaded, but the selected job title or description region was not recognized in this layout. Locate About the job, then capture again. Copy the capture diagnostics if it still fails; waiting alone will not fix an unsupported layout.',
         identity_mismatch: 'The page and selected job panel report different job IDs. Capture again once the intended job and its description agree; no previous description was reused.',
-        description_loading: 'The selected description contains a loading placeholder or is explicitly marked busy. Wait for that description to appear, then capture again.',
+        description_loading: 'The selected description is empty, contains a loading placeholder, or is explicitly marked busy. Wait for that description to appear, then capture again.',
         previous_selection_text: 'This panel still contains the previously captured job description under a different job ID. No previous description was reused. Wait for the intended description to replace it and capture again.',
         description_changing: 'The selected description kept changing during capture. Capture again when that text is stable; no previous description was reused.',
       };
@@ -340,6 +348,7 @@ export async function extractPosting(options = {}) {
   return { extractor_version: version, page_url: location.href, page_title: document.title, captured_at: new Date().toISOString(), candidates,
     ...(linkedIn ? { selection: { platform: 'LINKEDIN', job_id: linkedIn.id, canonical_url: `https://www.linkedin.com/jobs/view/${linkedIn.id}/` },
       selection_guard: { description_text: linkedIn.rawText, title: linkedIn.title, pane_selector: paneSelector, description_selector: descriptionSelector, title_selector: titleSelector,
+        title_missing: !linkedIn.heading,
         root_locator: locatorFor(linkedIn.root), title_locator: locatorFor(linkedIn.heading), description_locator: locatorFor(linkedIn.body) } } : {}),
     warnings: [...new Map(warnings.map(w => [JSON.stringify(w), w])).values()] };
 }
