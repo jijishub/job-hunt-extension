@@ -9,15 +9,15 @@ export async function capturePosting() {
   if (result.result.selection_guard) {
     const [check] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [result.result.selection, result.result.selection_guard], func: (selection, guard) => {
       const visible = n => { for (; n; n = n.parentElement) if (n.hidden || n.getAttribute('aria-hidden') === 'true' || getComputedStyle(n).display === 'none' || getComputedStyle(n).visibility === 'hidden') return false; return true; };
-      const root = [...document.querySelectorAll(guard.pane_selector)].find(visible) || (location.pathname.includes('/jobs/view/') ? document.querySelector('main') : null);
-      const heading = root?.querySelector(guard.title_selector) || root?.querySelector('h1');
-      const body = guard.description_selector.split(',').flatMap(selector => [...(root?.querySelectorAll(selector.trim()) || [])]).find(visible);
+      const root = guard.root_locator ? document.querySelector(guard.root_locator) : [...document.querySelectorAll(guard.pane_selector)].find(visible) || (location.pathname.includes('/jobs/view/') ? document.querySelector('main, [role="main"]') : null);
+      const heading = guard.title_locator ? document.querySelector(guard.title_locator) : root?.querySelector(guard.title_selector) || root?.querySelector('h1');
+      const body = guard.description_locator ? document.querySelector(guard.description_locator) : guard.description_selector.split(',').flatMap(selector => [...(root?.querySelectorAll(selector.trim()) || [])]).find(visible);
       const idFrom = value => { try { const url = new URL(value, location.href); return url.pathname.match(/\/jobs\/view\/(?:[^/?#]*-)?(\d+)(?:[/?#]|$)/)?.[1] || url.searchParams.get('currentJobId'); } catch { return null; } };
       const link = heading?.matches('a[href]') ? heading : heading?.querySelector('a[href*="/jobs/view/"]');
       const linkId = idFrom(link?.href), urlId = idFrom(location.href);
       const paneId = root?.getAttribute('data-job-id') || root?.getAttribute('data-current-job-id') || root?.getAttribute('data-entity-urn')?.match(/jobPosting:(\d+)/)?.[1];
       const bodyId = body?.closest('[data-job-description-id]')?.getAttribute('data-job-description-id') || body?.closest('[data-job-id]')?.getAttribute('data-job-id');
-      return body?.textContent === guard.description_text && heading?.textContent.replace(/\s+/g, ' ').trim() === guard.title.replace(/\s+/g, ' ').trim() &&
+      return !!root && !!heading && !!body && visible(root) && visible(heading) && visible(body) && root.contains(heading) && root.contains(body) && body.textContent === guard.description_text && heading.textContent.replace(/\s+/g, ' ').trim() === guard.title.replace(/\s+/g, ' ').trim() &&
         [urlId, linkId, paneId, bodyId].filter(Boolean).every(id => id === selection.job_id) && !!(urlId || linkId || paneId);
     } });
     if (!check?.result) throw new Error('The selected LinkedIn job changed during capture. Wait for its description, then capture again.');

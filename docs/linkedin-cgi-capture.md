@@ -10,6 +10,16 @@ The supplied [CGI posting](https://cgi.njoyn.com/corp/xweb/xweb.asp?CLID=21001&p
 
 ## Selection, timing and evidence
 
+### Loaded signed-in page follow-up (extractor v4)
+
+A subsequent screenshot of [Backend Developer at NCS Group](https://www.linkedin.com/jobs/view/4475878761/) showed a fully loaded signed-in page returning the old combined missing/loading/mismatched-description message. The user confirmed **About the job** was already present. This establishes that waiting is not an adequate diagnosis. The actual signed-in DOM was not accessible, so a specific failing selector has not been verified on that account.
+
+The extractor now supports a unique visible **About the job** heading inside the selected posting pane and its narrow description card, plus semantic title headings such as `h2`, a company link in the posting header, and a detail-page `[role="main"]` root. It excludes premium/recommendation regions and unrelated section cards. Search pages still require an identifiable details pane; they do not fall back to the entire search results page. Exact title/body/root locators carry into the installed extension's final selection check, alongside the existing ID/text checks. Explicit header facts remain separate from description text.
+
+Recognition failures now distinguish unsupported layout, explicit loading/empty description, ID mismatch, previous-selection text and changing text. No failed attempt replaces saved captures. Local diagnostics can be copied/downloaded from Capture; they include extractor version, reason, canonical page path without query, job IDs, recognition booleans and description length. They exclude description text, DOM HTML, resumes, profile and credentials. A successful attempt clears these transient diagnostics.
+
+`linkedin-semantic-detail.html` is a synthetic regression based on the screenshot's visible sections, with no legacy job classes or `h1`. Source and installed-extension tests cover title/company/location, explicit Hybrid/full-time labels, headings/bullets, exclusion of premium/connections/recommendations, canonical identity, delayed split-pane description replacement, unsupported-layout diagnostics, diagnostic download and the copy action with a mocked clipboard. This does not establish live signed-in compatibility. The build, 49 unit tests and installed posting/capture/role-fit suites pass for this follow-up; CGI's reviewed payload remains accepted by the actual isolated tracker routes. Production upload restrictions remain unchanged.
+
 The `linkedin-dom` adapter scopes descriptions and identity facts to the active details pane or public detail page. It reads explicit company/location/employment/work-model labels; absence stays unknown. Company names, remote work and employment type are not guessed from the description. Recommended jobs and job-card JSON-LD are excluded. A structured LinkedIn posting must identify the selected job ID before being combined with DOM evidence, even if a neighboring title happens to match.
 
 The current job ID comes from the detail permalink, search `currentJobId`, active header link or pane identity. Conflicting IDs wait rather than combining fields. The posting URL becomes `https://www.linkedin.com/jobs/view/<id>/`; original page URL remains source evidence. Search capture reads the selected pane without opening another page.

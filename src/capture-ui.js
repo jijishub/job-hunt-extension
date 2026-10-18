@@ -12,6 +12,8 @@ export class CapturePanel {
   drafts = new Map();
   transport = new Map();
   readiness = new Map();
+  lastCaptureFailure = null;
+  diagnosticsCopied = false;
   fit = new CaptureFitPanel(this);
   configure(runtime) { this.fit.runtime = runtime; }
   async load() { this.captures = await loadCaptures(); this.selected = this.captures[0]?.id || null; await this.fit.load(); await this.checkReadiness(); }
@@ -22,7 +24,7 @@ export class CapturePanel {
     catch (e) { this.readiness.set(c.id, { eligible: false, reasons: [e.code || 'invalid_capture'], message: e.message }); }
   }
   get current() { return this.captures.find(c => c.id === this.selected); }
-  reset() { this.captures = []; this.selected = null; this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
+  reset() { this.captures = []; this.selected = null; this.drafts.clear(); this.transport.clear(); this.readiness.clear(); this.lastCaptureFailure = null; this.diagnosticsCopied = false; this.fit.jobs = []; this.fit.deliveries = []; this.fit.preferences = null; this.fit.connection = null; this.fit.preferenceDraft = false; }
   render(busy) {
     const capture = this.current, candidate = capture?.snapshot.candidates[capture.candidate_index];
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;
@@ -72,6 +74,7 @@ export class CapturePanel {
     return `<section class="card"><div class="section-head"><h2>Capture a posting</h2><span class="tag">LOCAL PILOT</span></div>
       <p class="hint">Open one full job posting, then capture it. Review the text against the page. Capturing stays local. Assessment and local tracker delivery each require a separate explicit action.</p>
       <button id="capture-posting" class="button primary full" ${disabled}>${busy === 'capture' ? 'Capturing posting…' : 'Capture current posting'}</button>
+      ${this.lastCaptureFailure ? `<div class="capture-diagnostics"><p class="hint">No capture was saved for this attempt. Diagnostics contain job ID, recognition flags and character counts. They exclude description text, resumes, profile and credentials.</p><div class="button-row"><button id="capture-diagnostics-copy" class="text-button" ${disabled}>${this.diagnosticsCopied ? 'Diagnostics copied' : 'Copy capture diagnostics'}</button><button id="capture-diagnostics-export" class="text-button" ${disabled}>Download diagnostics</button></div><details><summary>Recognition diagnostics</summary><pre>${esc(JSON.stringify(this.lastCaptureFailure, null, 2))}</pre></details></div>` : ''}
       <p class="hint">Your existing Gemini import workflow remains available in Job Hunt.</p>
       ${this.captures.length ? `<label class="label" for="capture-history">SAVED CAPTURES (${this.captures.length})</label><select id="capture-history" ${disabled}>${this.captures.map(c => `<option value="${esc(c.id)}" ${c.id === this.selected ? 'selected' : ''}>${esc(c.posting?.role_title || 'Choose posting')} · ${esc(c.posting?.company_name || new URL(c.snapshot.page_url).hostname)}</option>`).join('')}</select>` : '<p class="hint">No local captures yet.</p>'}</section>
       ${capture ? `<section class="card capture-preview"><h2>Posting preview</h2><p class="hint">${esc(capture.snapshot.captured_at)} · ${esc(capture.snapshot.extractor_version)}<br>${esc(capture.snapshot.page_url)}</p>
@@ -95,8 +98,12 @@ export class CapturePanel {
     this.fit.bind(app, task, refresh);
     const on = (selector, event, fn) => app.querySelector(selector)?.addEventListener(event, fn);
     on('#capture-posting', 'click', () => task('capture', async () => {
+      this.lastCaptureFailure = null; this.diagnosticsCopied = false;
       const snapshot = await capturePosting();
-      if (!snapshot.candidates.length) throw new Error(snapshot.warnings.map(w => typeof w === 'string' ? w : w.message).join(' '));
+      if (!snapshot.candidates.length) {
+        this.lastCaptureFailure = snapshot.diagnostics || null;
+        throw new Error(snapshot.warnings.map(w => typeof w === 'string' ? w : w.message).join(' '));
+      }
       const capture = createCapture(snapshot);
       await saveCapture(capture);
       this.captures.unshift(capture); this.selected = capture.id;
@@ -182,6 +189,8 @@ export class CapturePanel {
       const url = URL.createObjectURL(new Blob([value], { type: 'application/json' }));
       const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
+    on('#capture-diagnostics-copy', 'click', () => task('copy', async () => { await navigator.clipboard.writeText(JSON.stringify(this.lastCaptureFailure, null, 2)); this.diagnosticsCopied = true; }));
+    on('#capture-diagnostics-export', 'click', () => download(JSON.stringify(this.lastCaptureFailure, null, 2), 'job-hunt-capture-diagnostics.json'));
     on('#capture-transport-export', 'click', () => {
       const prepared = this.transport.get(this.current.id);
       if (prepared) download(prepared.json, `job-hunt-offline-request-${this.current.id}.json`);
