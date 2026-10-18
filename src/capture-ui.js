@@ -1,7 +1,7 @@
 import { capturePosting } from './browser.js';
 import { captureFields, captureWarnings, createCapture, correctCapture, selectCandidate, resolutionActions } from './captures.js';
 import { serializeCapture } from './capture-transport.js';
-import { sourceVariants, normalizeSalaryPeriod, INFORMATIONAL_WARNINGS } from './capture-rules.js';
+import { composeRequirements, sourceVariants, normalizeSalaryPeriod, INFORMATIONAL_WARNINGS } from './capture-rules.js';
 import { loadCaptures, saveCapture, deleteCapture } from './capture-storage.js';
 import { CaptureFitPanel } from './capture-fit-ui.js';
 
@@ -61,7 +61,7 @@ export class CapturePanel {
     }).join('') : '';
     const transport = this.transport.get(capture?.id);
     const field = ([key, label]) => {
-      const value = key === 'qualifications' && Array.isArray(posting[key]) ? posting[key].join('\n') : posting[key];
+      const value = key === 'description' ? composeRequirements(posting) : posting[key];
       const options = key === 'work_model' ? ['ON_SITE', 'HYBRID', 'REMOTE'] : key === 'job_type' ? ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP'] : null;
       const provenance = capture.corrections[key] || candidate?.provenance[key];
       return `<label class="label" for="capture-${key}">${label}</label>${options
@@ -82,7 +82,7 @@ export class CapturePanel {
       <div class="capture-warnings" role="note"><strong>Completeness warnings and review decisions</strong><ul>${warningList(warnings.filter(w => !INFORMATIONAL_WARNINGS.has(w.code)))}</ul><details class="capture-information"><summary>Informational unknowns (${warnings.filter(w => INFORMATIONAL_WARNINGS.has(w.code)).length}) · do not block assessment</summary><ul>${warningList(warnings.filter(w => INFORMATIONAL_WARNINGS.has(w.code)))}</ul></details><p>Original warnings stay as evidence. Resolved warnings show your saved decision; informational unknowns require no correction.</p></div>
       ${readinessHTML}
       ${capture.snapshot.candidates.length > 1 ? `<label class="label" for="capture-candidate">WHICH POSTING?</label><select id="capture-candidate" ${disabled}><option value="">Choose a posting</option>${capture.snapshot.candidates.map((c, i) => `<option value="${i}" ${capture.candidate_index === i ? 'selected' : ''}>${esc(c.posting.role_title || 'Untitled')} · ${esc(c.posting.company_name || 'Unknown company')} (${esc(c.adapter)})</option>`).join('')}</select>` : ''}
-      ${posting ? `<form id="capture-form">${captureFields.map(field).join('')}<p class="hint">Normalized salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}. The raw period remains preserved. Leave unknown facts blank. Seniority and first employer response remain null. Referral and Walk-in require a saved user correction.</p>
+      ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => key !== 'qualifications').map(field).join('')}<p class="hint">Description includes the qualifications and requirements. Saving keeps them together in this one field; original source facts remain preserved.</p><p class="hint">Normalized salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}. The raw period remains preserved. Leave unknown facts blank. Seniority and first employer response remain null. Referral and Walk-in require a saved user correction.</p>
       ${resolutionControls ? `<div class="capture-resolutions"><h3>Resolve review warnings</h3><p class="hint">Choose a specific decision and explain it. Source choices replace the description with that original variant. Editing posting facts clears prior resolutions and review.</p>${resolutionControls}</div>` : ''}
       <label class="check"><input id="capture-reviewed" type="checkbox" ${draft ? draft.reviewed ? 'checked' : '' : capture.reviewed_at && capture.review_basis_hash ? 'checked' : ''} ${disabled}> I compared this with the full posting and checked the requirements.</label>
       <button class="button primary full" ${disabled}>Save corrections locally</button>

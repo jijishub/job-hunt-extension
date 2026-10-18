@@ -2,7 +2,7 @@
 // Reads the current document. LinkedIn capture may expand only its description
 // button and wait for the selected pane. Never follows Apply or calls an API.
 export async function extractPosting(options = {}) {
-  const version = 'posting-pilot-v5';
+  const version = 'posting-pilot-v6';
   const maxText = 120000;
   const warnings = [];
   const promotionalContent = '.jobs-premium-applicant-insights, .job-details-how-you-match, [data-testid="premium-upsell"], [data-ad], .ad-banner-container';
@@ -82,12 +82,29 @@ export async function extractPosting(options = {}) {
     for (let n = node; n && n !== document.documentElement; n = n.parentElement) parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + ([...n.parentElement.children].indexOf(n) + 1) + ')');
     return 'html > ' + parts.join(' > ');
   }
+  const factSelector = 'span,button,p,div,li';
+  function factValues(node) {
+    return [...(node?.querySelectorAll(factSelector) || [])].filter(n => usable(n) && !n.closest('nav,aside') && !n.querySelector(factSelector))
+      .map(n => clean(n.textContent).replace(/^[✓✔☑\s]+/, '').replace(/[‐‑–]/g, '-'));
+  }
+  const hasHeaderFacts = node => factValues(node).some(value => model(value) || jobType(value));
+  const safeHeader = (node, about) => !node.contains(about) && !node.querySelector(neighborContent + ', ' + promotionalContent) &&
+    ![...node.querySelectorAll(headingsSelector)].some(n => /^(?:use ai|people you|similar jobs|recommended jobs|job search smarter)/i.test(clean(n.textContent)));
   function headerFor(heading, root, about) {
+    let companyCard = null;
     for (let node = heading?.parentElement; node && node !== root; node = node.parentElement) {
-      if (about && node.contains(about)) break;
-      if ([...node.querySelectorAll('a[href*="/company/"]')].some(usable)) return node;
+      if (!safeHeader(node, about)) break;
+      if (hasHeaderFacts(node)) return node;
+      if (!companyCard && [...node.querySelectorAll('a[href*="/company/"]')].some(usable)) companyCard = node;
     }
-    return heading?.parentElement || null;
+    if (heading) return companyCard || heading.parentElement;
+    // A visible title may use an unrecognized element. Locate its metadata card
+    // independently, bounded before About the job and outside other cards.
+    if (!about) return null;
+    const cards = [...(root?.querySelectorAll('section,article,header,div') || [])].filter(node => usable(node) &&
+      !!(node.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING) && safeHeader(node, about) && hasHeaderFacts(node));
+    const outermost = cards.filter(node => !cards.some(other => other !== node && other.contains(node)));
+    return outermost.length === 1 ? outermost[0] : null;
   }
   function linkedInContext() {
     const roots = [...document.querySelectorAll(paneSelector)].filter(visible);
@@ -255,11 +272,13 @@ export async function extractPosting(options = {}) {
     adapter = 'linkedin-dom'; region = linkedIn.body; title = linkedIn.title;
     company = [...linkedIn.root.querySelectorAll('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name, .topcard__org-name-link')].find(usable)?.textContent || [...(linkedIn.header?.querySelectorAll('a[href*="/company/"]') || [])].find(a => usable(a) && clean(a.textContent))?.textContent;
     place = linkedIn.root.querySelector('.job-details-jobs-unified-top-card__primary-description-container .tvm__text--low-emphasis, .job-details-jobs-unified-top-card__tertiary-description-container .tvm__text--low-emphasis, .jobs-unified-top-card__bullet, .topcard__flavor--bullet')?.textContent?.split('·')[0];
-    if (!place) place = [...(linkedIn.header?.querySelectorAll('[data-testid="job-location"], p, span') || [])].filter(n => usable(n) && !n.querySelector('p,span') && !n.closest('button,a'))
-      .map(n => clean(n.textContent).split('·')[0].trim()).find(text => text.includes(',') && text !== clean(company) && text !== title && !/applicant|clicked|apply|response|ago|premium/i.test(text));
+    if (!place) place = [...(linkedIn.header?.querySelectorAll('[data-testid="job-location"], p, span, div') || [])].filter(n => usable(n) && !n.querySelector('p,button,a,h1,h2,h3,[role="heading"]') && !n.closest('button,a') &&
+      (!n.querySelector('span,div') || /·.*(?:ago|applicant|clicked|reposted)/i.test(clean(n.textContent))))
+      .filter(n => n.matches('[data-testid="job-location"]') || clean(n.textContent).includes(',') || /·.*(?:ago|applicant|clicked|reposted)/i.test(clean(n.textContent)))
+      .map(n => clean(n.textContent).split('·')[0].trim()).find(text => text && text !== clean(company) && text !== title && !/applicant|clicked|apply|response|ago|premium/i.test(text));
     const facts = [...linkedIn.root.querySelectorAll('.job-details-jobs-unified-top-card__job-insight, .job-details-jobs-unified-top-card__job-insight-view-model, .jobs-unified-top-card__job-insight, .description__job-criteria-item'),
-      ...[...(linkedIn.header?.querySelectorAll('span,button') || [])].filter(node => usable(node) && !node.querySelector('span,button'))];
-    const values = facts.flatMap(node => [clean(node.textContent), ...node.textContent.split(/[\n·]/).map(clean), ...[...node.querySelectorAll('span')].filter(n => !n.querySelector('span')).map(n => clean(n.textContent))]);
+      ...[...(linkedIn.header?.querySelectorAll('span,button') || [])].filter(node => usable(node) && !node.querySelector('span,button'))].filter(usable);
+    const values = [...factValues(linkedIn.header), ...facts.flatMap(node => [clean(node.textContent), ...node.textContent.split(/[\n·]/).map(clean), ...[...node.querySelectorAll('span')].filter(n => !n.querySelector('span')).map(n => clean(n.textContent))])];
     const models = [...new Set(values.map(model).filter(Boolean))], types = [...new Set(values.map(jobType).filter(Boolean))];
     workplace = models.length === 1 ? models[0] : null;
     employment = types.length === 1 ? types[0] : null;
@@ -349,6 +368,7 @@ export async function extractPosting(options = {}) {
     ...(linkedIn ? { selection: { platform: 'LINKEDIN', job_id: linkedIn.id, canonical_url: `https://www.linkedin.com/jobs/view/${linkedIn.id}/` },
       selection_guard: { description_text: linkedIn.rawText, title: linkedIn.title, pane_selector: paneSelector, description_selector: descriptionSelector, title_selector: titleSelector,
         title_missing: !linkedIn.heading,
+        header_locator: locatorFor(linkedIn.header), header_text: linkedIn.header?.textContent || null,
         root_locator: locatorFor(linkedIn.root), title_locator: locatorFor(linkedIn.heading), description_locator: locatorFor(linkedIn.body) } } : {}),
     warnings: [...new Map(warnings.map(w => [JSON.stringify(w), w])).values()] };
 }

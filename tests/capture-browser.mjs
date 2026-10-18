@@ -148,6 +148,17 @@ try {
   await panel.getByRole('button', { name: 'Delete capture', exact: true }).click();
   await panel.getByText('No local captures yet.', { exact: true }).waitFor();
 
+  // One editor includes legacy/structured qualifications without losing them
+  // on save, duplicating existing bullets, or restoring intentionally edited text.
+  await jsonPage.setContent(schema({ ...job, description: '<p>Complete posting.</p><ul><li>Shared requirement.</li></ul>', qualifications: ['Shared requirement.', 'SEPARATE_REQUIREMENT_TO_MERGE'] }));
+  await target(jsonPage);await panel.getByRole('button',{name:'Capture current posting',exact:true}).click();await panel.locator('#capture-description').waitFor();
+  assert.equal(await panel.locator('#capture-qualifications').count(),0);const unified=await panel.locator('#capture-description').inputValue();assert.match(unified,/SEPARATE_REQUIREMENT_TO_MERGE/);assert.equal(unified.match(/Shared requirement\./g).length,1);
+  await panel.getByRole('button',{name:'Save corrections locally'}).click();await panel.waitForFunction(()=>!document.querySelector('#capture-posting').disabled);
+  const merged=await panel.evaluate(async()=>Object.entries(await chrome.storage.local.get(null)).find(([k])=>k.startsWith('posting-capture:'))[1]);assert.deepEqual(merged.posting.qualifications,[]);assert.equal(merged.posting.description,unified);assert.deepEqual(merged.snapshot.candidates[0].posting.qualifications,['Shared requirement.','SEPARATE_REQUIREMENT_TO_MERGE']);
+  await panel.reload();await panel.locator('[data-tab=capture]').click();assert.equal(await panel.locator('#capture-description').inputValue(),unified);
+  await panel.locator('#capture-description').fill('User reviewed and replaced all requirements.');await panel.getByRole('button',{name:'Save corrections locally'}).click();await panel.waitForFunction(()=>!document.querySelector('#capture-posting').disabled);await panel.reload();await panel.locator('[data-tab=capture]').click();assert.equal(await panel.locator('#capture-description').inputValue(),'User reviewed and replaced all requirements.');
+  panel.once('dialog',dialog=>dialog.accept());await panel.getByRole('button',{name:'Delete capture',exact:true}).click();await panel.getByText('No local captures yet.',{exact:true}).waitFor();
+
   // The sampled Lever conflict needs a specific resolution; a checkbox alone
   // must not turn it into an eligible offline request.
   await target(leverPage);

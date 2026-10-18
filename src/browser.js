@@ -17,8 +17,10 @@ export async function capturePosting() {
       const linkId = idFrom(link?.href), urlId = idFrom(location.href);
       const paneId = root?.getAttribute('data-job-id') || root?.getAttribute('data-current-job-id') || root?.getAttribute('data-entity-urn')?.match(/jobPosting:(\d+)/)?.[1];
       const bodyId = body?.closest('[data-job-description-id]')?.getAttribute('data-job-description-id') || body?.closest('[data-job-id]')?.getAttribute('data-job-id');
+      const header = guard.header_locator ? document.querySelector(guard.header_locator) : null;
+      const headerMatches = !guard.header_locator || !!header && visible(header) && !!root?.contains(header) && header.textContent === guard.header_text;
       const titleMatches = guard.title_missing ? !guard.title && !guard.title_locator : !!heading && visible(heading) && !!root?.contains(heading) && heading.textContent.replace(/\s+/g, ' ').trim() === guard.title.replace(/\s+/g, ' ').trim();
-      return !!root && !!body && visible(root) && visible(body) && titleMatches && root.contains(body) && body.textContent === guard.description_text &&
+      return !!root && !!body && visible(root) && visible(body) && titleMatches && headerMatches && root.contains(body) && body.textContent === guard.description_text &&
         [urlId, linkId, paneId, bodyId].filter(Boolean).every(id => id === selection.job_id) && !!(urlId || linkId || paneId);
     } });
     if (!check?.result) throw new Error('The selected LinkedIn job changed during capture. Wait for its description, then capture again.');

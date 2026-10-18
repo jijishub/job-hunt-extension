@@ -10,6 +10,16 @@ The supplied [CGI posting](https://cgi.njoyn.com/corp/xweb/xweb.asp?CLID=21001&p
 
 ## Selection, timing and evidence
 
+### Single description and explicit metadata follow-up (extractor v6)
+
+A screenshot of job `4475427660` showed explicit **Remote** and **Full-time** pills, a country-only location **Philippines**, and unknown preview fields. The signed-in DOM was not supplied. Code inspection identified two supported failure paths: metadata recognition depended on a recognized title, and the leaf reader omitted plain `div` labels or decorated labels such as `✓ Full-time`. A synthetic screenshot-based fixture now covers both cases. V6 scopes metadata to a single posting header card before **About the job**, independently of title recognition, excluding premium/recommendations and unrelated cards. It reads explicit leaf labels, strips leading check marks, and accepts a country-only location from its posting metadata row. Missing or conflicting work-model labels stay unknown; title/description mentions cannot supply the work model. The final save guard also checks the header text to reject changing metadata.
+
+The preview now has one description editor. It uses the existing paragraph/list composition rules to include separately stored qualifications without repeating exact normalized paragraphs/list items. Saving corrections or completeness review puts that edited content in `description` and clears the editable `qualifications` array, with normal correction metadata and review invalidation. Original snapshots, extracted arrays, structured facts and both text variants remain immutable and exportable. Existing captures/assessments are not silently migrated. The v1 optional qualifications field remains supported for interoperability; no tracker contract change is needed.
+
+Regression coverage includes plain `div` pills, decorated Full-time, metadata with and without a semantic title, country-only location, premium/neighbor exclusions, absent/conflicting work-model labels, header changes before saving, single-editor merge/save/reopen, and intentionally removed requirements not reappearing from original arrays. Signed-in layout verification remains simulated.
+
+Completed v6 checks: production build, 49 unit tests, installed capture, role-fit and posting-adapter browser suites. The final posting suite also verifies that CGI's single-description request is accepted by the actual isolated tracker routes with its completed fit and preserved source variants. Production uploads stay disabled.
+
 ### Missing-title diagnostics follow-up (extractor v5)
 
 User-supplied v4 diagnostics for job `4475426687` showed a recognized root, matching URL/header IDs, **About the job**, and 3,128 description characters, but `title_found: false`. The exact live DOM remains unavailable. Inspection of the fallback found that an `h2` could be rejected when the company link lived outside its ancestor card. V5 accepts a unique primary heading before **About the job** without that company-link requirement. Multiple competing headings remain unknown; it does not guess a title from description text or browser page title.
