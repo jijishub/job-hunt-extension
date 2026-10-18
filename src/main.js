@@ -47,9 +47,9 @@ async function refreshLocalState() {
 function render() {
   app.innerHTML = `
     <header><a class="brand" href="https://jobhunt.jizellecasia.site" target="_blank" rel="noreferrer">${icon}<span>job hunt<span class="brand-sub">YOUR APPLICATION SIDEKICK</span></span></a><span class="edition">FILL<br>EDITION</span></header>
-    <main><div class="eyebrow"><span class="dot"></span> LESS ADMIN. MORE POSSIBILITIES.</div>
+    <main class="${tab === 'capture' ? 'capture-workspace' : ''}">${tab === 'capture' ? '' : `<div class="eyebrow"><span class="dot"></span> LESS ADMIN. MORE POSSIBILITIES.</div>
     <div class="hero"><h1>Big ambitions.<br><em>Less typing.</em></h1><span class="spark" aria-hidden="true">✳</span></div>
-    <p class="intro">Your experience, on repeat.<br>The application paperwork? Handled.</p>
+    <p class="intro">Your experience, on repeat.<br>The application paperwork? Handled.</p>`}
     <nav aria-label="Workspace">${[['fill', '✦', 'Fill'], ['capture', '↗', 'Capture'], ['resumes', '▤', 'Resumes'], ['profile', '♡', 'Profile'], ['settings', '⚙', 'Settings']].map(([id, i, label]) => `<button data-tab="${id}" class="${tab === id ? 'active' : ''}" ${busy ? 'disabled' : ''}>${i} <span>${label}</span></button>`).join('')}</nav>
     ${message ? `<div class="notice ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">${esc(message)}</div>` : ''}
     ${!isExtension ? '<div class="preview-note">Browser preview · Resume and settings tools work here. Install the extension to fill application pages. Preview data stays separate.</div>' : ''}

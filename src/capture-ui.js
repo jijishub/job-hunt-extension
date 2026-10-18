@@ -48,51 +48,57 @@ export class CapturePanel {
       frames_not_read: 'Check whether the embedded frame contains requirements. Record an explained resolution under review warnings.',
       unverified_layout: 'Compare the intended job title, employer, location and all posting sections with the page, then confirm the layout and requirements below.',
     };
-    const blockerLabel = code => { const fields = [...new Set(warnings.filter(w => w.code === code && w.field && !resolutions.some(r => r.warning_id === w.id)).map(w => w.field))]; return code + (fields.length ? ` (${fields.join(', ')})` : ''); };
-    const readinessHTML = `<div class="capture-assessment-status" role="status"><h3>What still blocks assessment?</h3>${draft ? '<p>Unsaved changes: save the current corrections, decisions and review first.</p>' : readiness?.eligible ? '<p>Nothing in the local capture checks. Unknown work model and employment type do not block assessment.</p>' : `<ul>${(readiness?.reasons || ['Checking saved capture']).map(code => `<li><strong>${esc(blockerLabel(code))}</strong>: ${esc(blockerActions[code] || readiness?.message || 'Resolve this warning with a decision and explanation below, then save the current review.')}</li>`).join('')}</ul>`}</div>`;
-    const labels = { use_rendered: 'Use original rendered description', use_structured: 'Use original structured description', corrected: 'I corrected the affected content', verified_irrelevant: 'I checked this against the complete posting; it does not block assessment' };
-    const resolutionControls = capture ? warnings.map((warning, i) => {
+    const reviewCodes = new Set(['pilot_review_required', 'requirements_unverified', 'structured_only', 'unverified_layout']);
+    const nextActions = [...new Set((readiness?.reasons || []).map(code => reviewCodes.has(code) ? 'Compare with the job page, then confirm review below.' : code === 'collapsed_content' ? 'Expand the original description and check that all text is included.' : blockerActions[code] || readiness?.message || 'Resolve the review note below.'))];
+    const readinessHTML = `<div class="capture-assessment-status ${readiness?.eligible && !draft ? 'is-ready' : ''}" role="status">${draft ? '<p>Changes not saved. Confirm review below.</p>' : readiness?.eligible ? '<p>✓ Reviewed. Choose your resume and save in step 3.</p>' : nextActions.length ? `<ul>${nextActions.map(action=>`<li>${esc(action)}</li>`).join('')}</ul>` : '<p>Compare this with the job page before saving.</p>'}</div>`;
+    const warningNames = { conflicting_sources:'Sources differ', collapsed_content:'Description may be clipped', missing_requirements:'Missing requirements', oversized_requirements:'Description is too long', invalid_salary_range:'Check the salary range', frames_not_read:'Check embedded content', source_truncated:'Source text was shortened' };
+    const labels = { use_rendered: 'Use text from the page', use_structured: 'Use structured source text', corrected: 'I corrected this', verified_irrelevant: 'I checked this; nothing is missing or incorrect' };
+    const controls = capture ? warnings.map((warning, i) => {
       const actions = resolutionActions(capture, warning);
       if (!actions.length) return '';
       const resolution = resolutions.find(r => r.warning_id === warning.id);
-      return `<div class="capture-resolution" data-warning-code="${esc(warning.code)}"><label class="label" for="resolution-action-${i}">${esc(warning.code)}</label><p class="hint">${esc(warning.message)}</p>
+      return { warning, html: `<div class="capture-resolution" data-warning-code="${esc(warning.code)}"><label class="label" for="resolution-action-${i}">${esc(warningNames[warning.code] || 'Review decision')}</label><p class="hint">${esc(warning.message)}</p>
         <select id="resolution-action-${i}" data-resolution-action="${esc(warning.id)}" ${disabled}><option value="">Unresolved</option>${actions.map(action => `<option value="${action}" ${resolution?.action === action ? 'selected' : ''}>${labels[action]}</option>`).join('')}</select>
-        <label class="label" for="resolution-note-${i}">EXPLANATION</label><textarea id="resolution-note-${i}" data-resolution-note="${esc(warning.id)}" rows="2" maxlength="2000" ${disabled}>${esc(resolution?.note || '')}</textarea></div>`;
-    }).join('') : '';
+        <label class="label" for="resolution-note-${i}">What did you check or correct?</label><textarea id="resolution-note-${i}" data-resolution-note="${esc(warning.id)}" rows="2" maxlength="2000" ${disabled}>${esc(resolution?.note || '')}</textarea></div>` };
+    }).filter(Boolean) : [];
+    const needsDecision = w => !reviewCodes.has(w.code) && w.code !== 'collapsed_content' && !(w.code === 'conflicting_sources' && w.field === 'description') && !statusFor(w).startsWith('Resolved');
+    const resolutionControls = controls.filter(c=>needsDecision(c.warning)).map(c=>c.html).join('');
+    const advancedControls = controls.filter(c=>!needsDecision(c.warning)).map(c=>c.html).join('');
+    const clipping = warnings.filter(w=>w.code === 'collapsed_content');
+    const clippingResolved = clipping.length && clipping.every(w=>resolutions.some(r=>r.warning_id===w.id && r.action && r.note?.trim()));
     const transport = this.transport.get(capture?.id);
     const field = ([key, label]) => {
       const value = key === 'description' ? composeRequirements(posting) : posting[key];
       const options = key === 'work_model' ? ['ON_SITE', 'HYBRID', 'REMOTE'] : key === 'job_type' ? ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP'] : null;
-      const provenance = capture.corrections[key] || candidate?.provenance[key];
+      const optionLabels = {ON_SITE:'On-site',HYBRID:'Hybrid',REMOTE:'Remote',FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'};
       return `<label class="label" for="capture-${key}">${label}</label>${options
-        ? `<select id="capture-${key}" name="${key}" ${disabled}><option value="">Unknown</option>${options.map(o => `<option ${value === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`
-        : ['description', 'qualifications'].includes(key)
-          ? `<textarea id="capture-${key}" name="${key}" rows="${key === 'description' ? 12 : 5}" maxlength="120000" ${disabled}>${esc(value)}</textarea>`
+        ? `<select id="capture-${key}" name="${key}" ${disabled}><option value="">Unknown</option>${options.map(o => `<option value="${o}" ${value === o ? 'selected' : ''}>${optionLabels[o]}</option>`).join('')}</select>`
+        : ['role_title', 'description', 'qualifications'].includes(key)
+          ? `<textarea id="capture-${key}" name="${key}" rows="${key === 'role_title' ? 2 : 8}" maxlength="120000" ${disabled}>${esc(value)}</textarea>`
           : `<input id="capture-${key}" name="${key}" value="${esc(value)}" ${['salary_min', 'salary_max'].includes(key) ? 'type="number" min="0" step="any"' : ''} ${disabled}>`}
-        ${provenance ? `<details class="capture-provenance"><summary>${provenance.method === 'user' ? 'Edited by you' : provenance.method === 'jsonld' ? 'Captured from structured posting data' : 'Captured from posting'} · source details</summary><p>${esc(`${provenance.method}${provenance.locator ? ': ' + provenance.locator : ' correction'}`)}</p></details>` : '<p class="capture-provenance">Not extracted · unknown</p>'}`;
+        `;
     };
-    return `<section class="card"><div class="section-head"><h2>Capture a posting</h2><span class="tag">LOCAL PREVIEW</span></div>
-      <p class="hint">Capture the posting, compare it with the page and save your review. Capturing stays local until you choose Save to Job Hunt below.</p>
-      <button id="capture-posting" class="button primary full" ${disabled}>${busy === 'capture' ? 'Capturing posting…' : 'Capture current posting'}</button>
+    return `<section class="card"><div class="section-head"><span class="step">1</span><h2>Capture</h2></div>
+      <button id="capture-posting" class="button ${capture ? 'secondary' : 'primary'} full" ${disabled}>${busy === 'capture' ? 'Capturing…' : capture ? 'Capture this page again' : 'Capture current job'}</button>
       ${this.lastCaptureFailure ? `<div class="capture-diagnostics"><p class="hint">No capture was saved for this attempt. Diagnostics contain job ID, recognition flags and character counts. They exclude description text, resumes, profile and credentials.</p><div class="button-row"><button id="capture-diagnostics-copy" class="text-button" ${disabled}>${this.diagnosticsCopied ? 'Diagnostics copied' : 'Copy capture diagnostics'}</button><button id="capture-diagnostics-export" class="text-button" ${disabled}>Download diagnostics</button></div><details><summary>Recognition diagnostics</summary><pre>${esc(JSON.stringify(this.lastCaptureFailure, null, 2))}</pre></details></div>` : ''}
-      <p class="hint">Your existing Gemini import workflow remains available in Job Hunt.</p>
-      ${this.captures.length ? `<label class="label" for="capture-history">SAVED CAPTURES (${this.captures.length})</label><select id="capture-history" ${disabled}>${this.captures.map(c => `<option value="${esc(c.id)}" ${c.id === this.selected ? 'selected' : ''}>${esc(c.posting?.role_title || 'Choose posting')} · ${esc(c.posting?.company_name || new URL(c.snapshot.page_url).hostname)}</option>`).join('')}</select>` : '<p class="hint">No local captures yet.</p>'}</section>
-      ${capture ? `<section class="card capture-preview"><h2>Posting preview</h2><p class="hint">${esc(capture.snapshot.captured_at)} · ${esc(capture.snapshot.extractor_version)}<br>${esc(capture.snapshot.page_url)}</p>
-      <p class="capture-status">${capture.reviewed_at && capture.review_basis_hash ? 'Reviewed by you · Local only' : 'Needs review · Local only'}${draft ? ' · Unsaved corrections' : ''}</p>
-      <div class="capture-warnings" role="note"><strong>Completeness warnings and review decisions</strong><ul>${warningList(warnings.filter(w => !INFORMATIONAL_WARNINGS.has(w.code)))}</ul><details class="capture-information"><summary>Informational unknowns (${warnings.filter(w => INFORMATIONAL_WARNINGS.has(w.code)).length}) · do not block assessment</summary><ul>${warningList(warnings.filter(w => INFORMATIONAL_WARNINGS.has(w.code)))}</ul></details><p>Original warnings stay as evidence. Resolved warnings show your saved decision; informational unknowns require no correction.</p></div>
+      <p class="hint">Open a job posting first. Nothing is uploaded yet.</p>
+      ${this.captures.length ? `<details><summary>Saved captures (${this.captures.length})</summary><select id="capture-history" aria-label="Saved captures" ${disabled}>${this.captures.map(c => `<option value="${esc(c.id)}" ${c.id === this.selected ? 'selected' : ''}>${esc(c.posting?.role_title || 'Choose posting')} · ${esc(c.posting?.company_name || new URL(c.snapshot.page_url).hostname)}</option>`).join('')}</select></details>` : ''}</section>
+      ${capture ? `<section class="card capture-preview"><div class="section-head"><span class="step">2</span><h2>Review posting</h2></div>
+      <p class="capture-status">${draft ? 'Unsaved changes' : capture.reviewed_at && capture.review_basis_hash ? 'Reviewed' : 'Check the details below'}</p>
       ${readinessHTML}
       ${capture.snapshot.candidates.length > 1 ? `<label class="label" for="capture-candidate">WHICH POSTING?</label><select id="capture-candidate" ${disabled}><option value="">Choose a posting</option>${capture.snapshot.candidates.map((c, i) => `<option value="${i}" ${capture.candidate_index === i ? 'selected' : ''}>${esc(c.posting.role_title || 'Untitled')} · ${esc(c.posting.company_name || 'Unknown company')} (${esc(c.adapter)})</option>`).join('')}</select>` : ''}
-      ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => key !== 'qualifications').map(field).join('')}<p class="hint">Description includes the qualifications and requirements. Saving keeps them together in this one field; original source facts remain preserved.</p><p class="hint">Normalized salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}. The raw period remains preserved. Leave unknown facts blank. Seniority and first employer response remain null. Referral and Walk-in require a saved user correction.</p>
-      ${resolutionControls ? `<div class="capture-resolutions"><h3>Resolve review warnings</h3><p class="hint">Choose a specific decision and explain it. Source choices replace the description with that original variant. Editing posting facts clears prior resolutions and review.</p>${resolutionControls}</div>` : ''}
-      <label class="check"><input id="capture-reviewed" type="checkbox" ${draft ? draft.reviewed ? 'checked' : '' : capture.reviewed_at && capture.review_basis_hash ? 'checked' : ''} ${disabled}> I compared this with the full posting and checked the requirements.</label>
-      <button class="button primary full" ${disabled}>Save corrections locally</button>
-      <div class="capture-completeness"><h3>Confirm requirements completeness</h3><p class="hint">Check that title, employer and location identify the intended job. Compare every description section and qualification with the original page and both preserved source versions, when present. If text is still missing, correct it or expand and capture again first. This action records layout/completeness decisions and current review; other conflicting fields still need their own resolution.</p><label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I compared the intended job's identity, complete available posting and source versions; the current description and qualifications contain all requirements.</label><button id="capture-confirm-completeness" type="button" class="button secondary full" disabled>Confirm requirements and save review</button></div></form>` : ''}
-      <details><summary>Preserved source & provenance</summary><p class="hint">Original extraction is kept separately from corrections. Source text excludes application form controls. This is a posting excerpt, not full-page HTML.</p>
+      ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => ['role_title','company_name','description'].includes(key)).map(field).join('')}
+      <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
+      <details><summary>Edit location, work type & salary</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
+      ${resolutionControls ? `<div class="capture-resolutions"><h3>Check these differences</h3>${resolutionControls}</div>` : ''}
+      ${readiness?.eligible && !draft ? '<details class="capture-review-again"><summary>Review again</summary>' : ''}<div class="capture-completeness">${clipping.length ? `<p class="hint">The page may hide part of the description.</p><label class="check"><input id="capture-clipping-confirmed" type="checkbox" ${clippingResolved && !draft ? 'checked' : ''} ${disabled}> I expanded the original posting and verified that all its text is included here.</label>` : ''}<label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I checked the title, company and full description against the job page.</label><button id="capture-confirm-completeness" type="button" class="button ${readiness?.eligible && !draft ? 'secondary' : 'primary'} full" disabled>Confirm review</button></div>${readiness?.eligible && !draft ? '</details>' : ''}
+      <details><summary>Advanced review options</summary>${advancedControls}<label class="check"><input id="capture-reviewed" type="checkbox" ${draft ? draft.reviewed ? 'checked' : '' : capture.reviewed_at && capture.review_basis_hash ? 'checked' : ''} ${disabled}> Mark these changes reviewed</label><button class="button secondary full" ${disabled}>Save corrections locally</button></details></form>` : ''}
+      <details><summary>Sources & review history</summary><p class="hint">${esc(capture.snapshot.captured_at)} · ${esc(capture.snapshot.extractor_version)}<br>${esc(capture.snapshot.page_url)}</p><div class="capture-warnings" role="note"><ul>${warningList(warnings.filter(w => !INFORMATIONAL_WARNINGS.has(w.code)))}</ul><details class="capture-information"><summary>Unknown details · do not block saving</summary><ul>${warningList(warnings.filter(w => INFORMATIONAL_WARNINGS.has(w.code)))}</ul></details></div>
       ${capture.snapshot.candidates.map((c, i) => `<article class="capture-source"><h3>Source ${i + 1}: ${esc(c.adapter)}</h3><p class="hint">Requisition: ${esc(c.source.requisition_id || 'Unknown')} · Salary period: ${esc(c.source.salary_period || 'Unknown')}</p><h4>Rendered posting text</h4><pre>${esc(c.source.rendered_text || '(None captured)')}</pre><h4>Structured posting text</h4><pre>${esc(c.source.structured_text || '(None captured)')}</pre><details><summary>Selected structured facts and field provenance</summary><pre>${esc(JSON.stringify({ structured_data: c.source.structured_data, structured_url: c.source.structured_url, provenance: c.provenance }, null, 2))}</pre></details></article>`).join('')}</details>
-      <div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export local pilot JSON</button><button id="capture-delete" class="text-button danger" ${disabled}>Delete capture</button></div><p class="hint">Export includes preserved source text and corrections. Its pilot schema is not a tracker API contract. Save corrections before exporting.</p></section>` : ''}
+      </section>` : ''}
       ${this.fit.render(capture, busy)}
-      ${capture ? `<section class="card"><h2>Offline transport check</h2><p class="hint">Prepare a request with the current matching fit, if available, or leave it Unassessed. Preparation never uploads or calls AI. Unresolved selections and oversized bodies stay local.</p><button id="capture-prepare" class="button secondary full" ${disabled}>Prepare offline request</button>
-      ${transport ? `<div class="capture-transport"><p>${transport.bytes} / ${transport.max_bytes} UTF-8 bytes</p><p>${transport.assessment.eligible ? 'Local review checks passed; server validation is still required.' : `Assessment blocked: ${esc(transport.assessment.reasons.join(', '))}`}</p><details><summary>Proposed request JSON</summary><pre>${esc(transport.json)}</pre></details><button id="capture-transport-export" class="text-button">Download offline request JSON</button></div>` : ''}</section>` : ''}`;
+      ${capture ? `<details class="card capture-advanced"><summary>Export & advanced tools</summary><div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export local capture</button><button id="capture-delete" class="text-button danger" ${disabled}>Delete capture</button></div><p class="hint">Offline requests do not upload or call AI.</p><button id="capture-prepare" class="button secondary full" ${disabled}>Prepare offline request</button>
+      ${transport ? `<div class="capture-transport"><p>${transport.bytes} / ${transport.max_bytes} UTF-8 bytes</p><p>${transport.assessment.eligible ? 'Local review checks passed; server validation is still required.' : `Assessment blocked: ${esc(transport.assessment.reasons.join(', '))}`}</p><details><summary>Proposed request JSON</summary><pre>${esc(transport.json)}</pre></details><button id="capture-transport-export" class="text-button">Download offline request JSON</button></div>` : ''}</details>` : ''}`;
   }
   bind(app, task, refresh) {
     this.fit.bind(app, task, refresh);
@@ -133,21 +139,26 @@ export class CapturePanel {
       app.querySelector('.fit-result')?.remove();
       app.querySelectorAll('[data-warning-state="resolved"]').forEach(node => { node.dataset.warningState = 'unresolved'; node.querySelector('.warning-status').textContent = 'Needs current saved review'; });
       const status = app.querySelector('.capture-assessment-status');
-      if (status) status.innerHTML = '<h3>What still blocks assessment?</h3><p>Unsaved changes: save the current corrections, decisions and review first.</p>';
-      app.querySelector('.capture-status').textContent = 'Unsaved corrections · Local only';
+      if (status) { status.innerHTML = '<p>Changes not saved. Confirm review below.</p>'; status.classList.remove('is-ready'); }
+      const saveButton = app.querySelector('#tracker-save');
+      if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Confirm review above'; }
+      app.querySelector('.capture-status').textContent = 'Unsaved changes';
     };
     const invalidate = (resolutions) => {
+      form.querySelector('.capture-review-again')?.setAttribute('open','');
       form.querySelector('#capture-reviewed').checked = false;
       form.querySelector('#capture-completeness-confirmed').checked = false;
       form.querySelector('#capture-confirm-completeness').disabled = true;
       if (resolutions) {
+        const clippingCheck = form.querySelector('#capture-clipping-confirmed');
+        if (clippingCheck) clippingCheck.checked = false;
         form.querySelectorAll('[data-resolution-action]').forEach(el => { el.value = ''; });
         form.querySelectorAll('[data-resolution-note]').forEach(el => { el.value = ''; });
       }
     };
     form?.addEventListener('input', e => {
       if (e.target.matches('[data-resolution-action]')) return;
-      if (!['capture-reviewed', 'capture-completeness-confirmed'].includes(e.target.id)) invalidate(!!e.target.name);
+      if (!['capture-reviewed', 'capture-completeness-confirmed', 'capture-clipping-confirmed'].includes(e.target.id)) invalidate(!!e.target.name);
       keepDraft();
     });
     form?.querySelectorAll('[data-resolution-action]').forEach(el => el.addEventListener('change', () => {
@@ -159,19 +170,23 @@ export class CapturePanel {
       } else invalidate(false);
       keepDraft();
     }));
-    on('#capture-completeness-confirmed', 'change', e => { app.querySelector('#capture-confirm-completeness').disabled = !e.target.checked; });
+    const canConfirm = () => app.querySelector('#capture-completeness-confirmed')?.checked && (!app.querySelector('#capture-clipping-confirmed') || app.querySelector('#capture-clipping-confirmed').checked);
+    const updateConfirm = () => { app.querySelector('#capture-confirm-completeness').disabled = !canConfirm(); };
+    on('#capture-completeness-confirmed', 'change', updateConfirm);
+    on('#capture-clipping-confirmed', 'change', updateConfirm);
     on('#capture-confirm-completeness', 'click', () => {
-      if (!app.querySelector('#capture-completeness-confirmed').checked) return;
+      if (!canConfirm()) return;
       const current = this.current, values = Object.fromEntries(new FormData(form)), decisions = readResolutions();
       const note = 'Compared the intended job title, employer and location, all available posting sections and qualifications with the original page and preserved source versions. Confirmed the current layout captures the intended job and its requirements are complete.';
       for (const w of captureWarnings(current)) {
         let action;
         if (['requirements_unverified', 'structured_only', 'unverified_layout'].includes(w.code)) action = 'verified_irrelevant';
+        if (w.code === 'collapsed_content' && app.querySelector('#capture-clipping-confirmed')?.checked) action = 'verified_irrelevant';
         if (w.code === 'conflicting_sources' && w.field === 'description') {
           const variant = sourceVariants(current.snapshot.candidates[current.candidate_index]).find(v => v.text === values.description);
           action = variant ? `use_${variant.id}` : 'corrected';
         }
-        if (action) { const index = decisions.findIndex(r => r.warning_id === w.id); if (index >= 0) decisions.splice(index, 1); decisions.push({ warning_id: w.id, action, note }); }
+        if (action) { const index = decisions.findIndex(r => r.warning_id === w.id); if (index >= 0) decisions.splice(index, 1); decisions.push({ warning_id: w.id, action, note: w.code === 'collapsed_content' ? 'Expanded the original posting and compared all of its text with the current description. Verified that the clipping warning does not indicate omitted text. ' + note : note }); }
       }
       task('review', async () => {
         const corrected = await correctCapture(current, values, true, decisions);
