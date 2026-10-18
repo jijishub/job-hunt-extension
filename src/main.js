@@ -4,7 +4,7 @@ import { load, save, isExtension } from './storage.js';
 import { readResume } from './resume.js';
 import { scanPage, runFrame } from './browser.js';
 import { CapturePanel } from './capture-ui.js';
-import { clearCaptures, loadCaptures } from './capture-storage.js';
+import { clearCaptures, loadCaptures, activeCaptureId } from './capture-storage.js';
 import { clearCaptureWork } from './capture-fit-ui.js';
 import { oneAtATime } from './local-work-store.js';
 import { canonicalJSON } from './canonical-json.js';
@@ -37,7 +37,7 @@ async function refreshLocalState() {
   const fresh = await load(), captures = await loadCaptures();
   if (canonicalJSON(fresh) !== canonicalJSON(state) || canonicalJSON(captures) !== canonicalJSON(capturePanel.captures)) capturePanel.transport.clear();
   state = fresh; capturePanel.captures = captures;
-  if (!captures.some(c => c.id === capturePanel.selected)) capturePanel.selected = captures[0]?.id || null;
+  capturePanel.selected = await activeCaptureId(captures);
   const preferencesBefore = canonicalJSON(capturePanel.fit.preferences);
   await capturePanel.fit.reload();
   await capturePanel.checkReadiness();
@@ -278,7 +278,7 @@ function bind() {
   on('#reset', 'click', () => { if (confirm('Delete all resumes, profile, keys, answers, captures, assessments and frozen deliveries?')) task('save', async () => { await clearCaptures(); await clearCaptureWork(); capturePanel.reset(); state = structuredClone(defaults); page = null; answers = []; await persist(); message = 'All local data deleted.'; }); });
 }
 if (isExtension) chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
+  if (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'capture-active-id' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k))) return;
   if(changes['tracker-connection'])capturePanel.fit.setLiveActive(false);
   const prefChange=changes['tracker-preferences'];
   if(prefChange && (prefChange.oldValue?.preferences_hash !== prefChange.newValue?.preferences_hash || prefChange.oldValue?.origin !== prefChange.newValue?.origin || prefChange.oldValue?.account_id !== prefChange.newValue?.account_id)) {capturePanel.transport.clear();app.querySelector('.capture-transport')?.remove();app.querySelector('.fit-result')?.remove();}

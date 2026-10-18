@@ -10,8 +10,11 @@ import { TrackerPreferences, effectivePreferences } from './tracker-preferences.
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const resumeFor = (state, index) => ({ id: `resume-slot-${index + 1}`, label: state.resumes[index]?.name ?? null, text: state.resumes[index]?.text });
-export async function clearCaptureWork() {
+export async function clearCaptureRecords() {
   for (const prefix of ['fit-job:', 'capture-delivery:']) for (const record of await workStore.list(prefix)) await workStore.remove(prefix + record.id);
+}
+export async function clearCaptureWork() {
+  await clearCaptureRecords();
   await workStore.remove('fit-preferences'); await workStore.remove('tracker-preferences'); await workStore.remove('tracker-connection');
 }
 export class CaptureFitPanel {

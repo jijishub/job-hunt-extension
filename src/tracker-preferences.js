@@ -1,4 +1,4 @@
-import { workStore } from './local-work-store.js';
+import { workStore, withCaptureDataLock } from './local-work-store.js';
 import { trackerOrigin } from './capture-delivery.js';
 import { canonicalJSON, sha256, validateFitPreferences } from './role-fit.js';
 
@@ -45,7 +45,8 @@ export class TrackerPreferences {
       }
       return snapshot;
     };
-    const result = this.applyQueue.catch(()=>{}).then(work);this.applyQueue = result;return result;
+    // Serialize invalidation with capture cleanup so live events cannot restore deleted work.
+    const result = this.applyQueue.catch(()=>{}).then(()=>withCaptureDataLock(work));this.applyQueue = result;return result;
   }
   async fresh(c) {
     await this.authorized(c);

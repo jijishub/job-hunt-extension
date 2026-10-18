@@ -2,8 +2,8 @@ import { capturePosting } from './browser.js';
 import { captureFields, captureWarnings, createCapture, correctCapture, selectCandidate, resolutionActions } from './captures.js';
 import { serializeCapture } from './capture-transport.js';
 import { composeRequirements, sourceVariants, normalizeSalaryPeriod, INFORMATIONAL_WARNINGS } from './capture-rules.js';
-import { loadCaptures, saveCapture, deleteCapture } from './capture-storage.js';
-import { CaptureFitPanel } from './capture-fit-ui.js';
+import { loadCaptures, saveCapture, startCapture, clearCaptures, activeCaptureId, withCaptureWorkIdle } from './capture-storage.js';
+import { CaptureFitPanel, clearCaptureRecords } from './capture-fit-ui.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export class CapturePanel {
@@ -16,7 +16,7 @@ export class CapturePanel {
   diagnosticsCopied = false;
   fit = new CaptureFitPanel(this);
   configure(runtime) { this.fit.runtime = runtime; }
-  async load() { this.captures = await loadCaptures(); this.selected = this.captures[0]?.id || null; await this.fit.load(); await this.checkReadiness(); }
+  async load() { this.captures = await loadCaptures(); this.selected = await activeCaptureId(this.captures); await this.fit.load(); await this.checkReadiness(); }
   async checkReadiness() {
     const c = this.current;
     if (!c) return;
@@ -81,8 +81,9 @@ export class CapturePanel {
     return `<section class="card"><div class="section-head"><span class="step">1</span><h2>Capture</h2></div>
       <button id="capture-posting" class="button ${capture ? 'secondary' : 'primary'} full" ${disabled}>${busy === 'capture' ? 'Capturing…' : capture ? 'Capture this page again' : 'Capture current job'}</button>
       ${this.lastCaptureFailure ? `<div class="capture-diagnostics"><p class="hint">No capture was saved for this attempt. Diagnostics contain job ID, recognition flags and character counts. They exclude description text, resumes, profile and credentials.</p><div class="button-row"><button id="capture-diagnostics-copy" class="text-button" ${disabled}>${this.diagnosticsCopied ? 'Diagnostics copied' : 'Copy capture diagnostics'}</button><button id="capture-diagnostics-export" class="text-button" ${disabled}>Download diagnostics</button></div><details><summary>Recognition diagnostics</summary><pre>${esc(JSON.stringify(this.lastCaptureFailure, null, 2))}</pre></details></div>` : ''}
-      <p class="hint">Open a job posting first. Nothing is uploaded yet.</p>
-      ${this.captures.length ? `<details><summary>Saved captures (${this.captures.length})</summary><select id="capture-history" aria-label="Saved captures" ${disabled}>${this.captures.map(c => `<option value="${esc(c.id)}" ${c.id === this.selected ? 'selected' : ''}>${esc(c.posting?.role_title || 'Choose posting')} · ${esc(c.posting?.company_name || new URL(c.snapshot.page_url).hostname)}</option>`).join('')}</select></details>` : ''}</section>
+      <p class="hint">Capturing another job replaces this posting. Nothing uploads until you save to Job Hunt.</p>
+      <button id="capture-clear" class="button secondary full danger" ${disabled} ${this.captures.length || this.fit.jobs.length || this.fit.deliveries.length || this.lastCaptureFailure ? '' : 'disabled'}>Clear capture data</button>
+      <p class="hint">Clears local postings, fit results and pending deliveries. Keeps resumes, settings and Job Hunt records.</p></section>
       ${capture ? `<section class="card capture-preview"><div class="section-head"><span class="step">2</span><h2>Review posting</h2></div>
       <p class="capture-status">${draft ? 'Unsaved changes' : capture.reviewed_at && capture.review_basis_hash ? 'Reviewed' : 'Check the details below'}</p>
       ${readinessHTML}
@@ -97,7 +98,7 @@ export class CapturePanel {
       ${capture.snapshot.candidates.map((c, i) => `<article class="capture-source"><h3>Source ${i + 1}: ${esc(c.adapter)}</h3><p class="hint">Requisition: ${esc(c.source.requisition_id || 'Unknown')} · Salary period: ${esc(c.source.salary_period || 'Unknown')}</p><h4>Rendered posting text</h4><pre>${esc(c.source.rendered_text || '(None captured)')}</pre><h4>Structured posting text</h4><pre>${esc(c.source.structured_text || '(None captured)')}</pre><details><summary>Selected structured facts and field provenance</summary><pre>${esc(JSON.stringify({ structured_data: c.source.structured_data, structured_url: c.source.structured_url, provenance: c.provenance }, null, 2))}</pre></details></article>`).join('')}</details>
       </section>` : ''}
       ${this.fit.render(capture, busy)}
-      ${capture ? `<details class="card capture-advanced"><summary>Export & advanced tools</summary><div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export local capture</button><button id="capture-delete" class="text-button danger" ${disabled}>Delete capture</button></div><p class="hint">Offline requests do not upload or call AI.</p><button id="capture-prepare" class="button secondary full" ${disabled}>Prepare offline request</button>
+      ${capture ? `<details class="card capture-advanced"><summary>Export & advanced tools</summary><div class="button-row"><button id="capture-export" class="text-button" ${disabled}>Export local capture</button></div><p class="hint">Offline requests do not upload or call AI.</p><button id="capture-prepare" class="button secondary full" ${disabled}>Prepare offline request</button>
       ${transport ? `<div class="capture-transport"><p>${transport.bytes} / ${transport.max_bytes} UTF-8 bytes</p><p>${transport.assessment.eligible ? 'Local review checks passed; server validation is still required.' : `Assessment blocked: ${esc(transport.assessment.reasons.join(', '))}`}</p><details><summary>Proposed request JSON</summary><pre>${esc(transport.json)}</pre></details><button id="capture-transport-export" class="text-button">Download offline request JSON</button></div>` : ''}</details>` : ''}`;
   }
   bind(app, task, refresh) {
@@ -111,19 +112,28 @@ export class CapturePanel {
         throw new Error(snapshot.warnings.map(w => typeof w === 'string' ? w : w.message).join(' '));
       }
       const capture = createCapture(snapshot);
-      await saveCapture(capture);
-      this.captures.unshift(capture); this.selected = capture.id;
+      await startCapture(capture);
+      this.captures = await loadCaptures(); this.selected = capture.id;
+      this.drafts.clear(); this.transport.clear(); this.readiness.clear();
+      await this.fit.reload();
     }));
-    on('#capture-history', 'change', e => task('review', async () => { this.selected = e.target.value; await this.checkReadiness(); }));
+    on('#capture-clear', 'click', () => task('save', async () => {
+      await withCaptureWorkIdle(async () => { await clearCaptures(); await clearCaptureRecords(); });
+      this.captures = []; this.selected = null;
+      this.drafts.clear(); this.transport.clear(); this.readiness.clear();
+      this.lastCaptureFailure = null; this.diagnosticsCopied = false;
+      await this.fit.reload();
+    }));
     on('#capture-candidate', 'change', e => {
       if (e.target.value === '') return;
       const index = Number(e.target.value), current = this.current;
       if (index === current.candidate_index) return;
       const capture = selectCandidate(current, index);
       task('save', async () => {
-        await saveCapture(capture);
+        if (capture.id === current.id) await saveCapture(capture);
+        else await startCapture(capture);
         if (capture.id === current.id) { this.captures[this.captures.indexOf(current)] = capture; this.drafts.delete(current.id); }
-        else this.captures.unshift(capture);
+        else this.captures = await loadCaptures();
         this.selected = capture.id;
       });
     });
@@ -223,11 +233,6 @@ export class CapturePanel {
     on('#capture-export', 'click', () => {
       if (this.drafts.has(this.current.id)) { alert('Save your corrections before exporting.'); return; }
       download(JSON.stringify(this.current, null, 2), `job-hunt-capture-${this.current.id}.json`);
-    });
-    on('#capture-delete', 'click', () => {
-      const current = this.current;
-      if (!confirm('Delete this local capture, its corrections and preserved source?')) return;
-      task('save', async () => { await deleteCapture(current.id); await this.fit.deleteCapture(current.id); this.transport.delete(current.id); this.drafts.delete(current.id); this.captures = this.captures.filter(c => c.id !== current.id); this.selected = this.captures[0]?.id || null; });
     });
   }
 }

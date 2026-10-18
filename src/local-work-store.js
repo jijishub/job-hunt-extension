@@ -9,6 +9,10 @@ export const workStore = {
   }
 };
 let localLock = false;
+export async function withCaptureDataLock(work) {
+  if (globalThis.navigator?.locks) return navigator.locks.request('job-hunt-capture-data', work);
+  return work();
+}
 export async function oneAtATime(name, work) {
   if (globalThis.navigator?.locks) return navigator.locks.request(name, { ifAvailable: true }, lock => lock ? work() : null);
   // Node tests share this module. Chrome extension pages use the cross-page lock.
