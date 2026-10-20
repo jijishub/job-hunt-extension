@@ -198,7 +198,9 @@ try {
   await panel.evaluate(id=>{window.captureFlowActiveTab=id;},linkedinId);await linkedin.bringToFront();await idle();
   await captureAndReview('AI Developer');
   assert.equal(await panel.locator('#capture-company_name').inputValue(),'Offshorly');
-  assert.equal((await activeCapture(linkedinId)).snapshot.extractor_version,'posting-pilot-v8');
+  assert.equal((await activeCapture(linkedinId)).snapshot.extractor_version,'posting-pilot-v9');
+  assert.equal((await activeCapture(linkedinId)).posting.salary_min,70000);
+  assert.equal((await activeCapture(linkedinId)).posting.salary_max,95000);
   assert.equal(aiCalls,beforeRetry);assert.equal(captures().length,2);
   checks.push('LinkedIn salary-heading fixture reaches reviewed AI Developer / Offshorly capture through real extension page injection without AI or upload');
   assert.deepEqual(external,[]);assert.deepEqual(pageErrors,[]);

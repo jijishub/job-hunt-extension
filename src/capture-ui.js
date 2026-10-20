@@ -4,6 +4,8 @@ import { serializeCapture } from './capture-transport.js';
 import { composeRequirements, sourceVariants, normalizeSalaryPeriod, INFORMATIONAL_WARNINGS } from './capture-rules.js';
 import { loadCaptures, saveCapture, startCapture, clearCaptures, activeCaptureId, withCaptureWorkIdle, captureWorkspace, updateCaptureWorkspace } from './capture-storage.js';
 import { CaptureFitPanel, clearCaptureRecords } from './capture-fit-ui.js';
+import { load as loadSettings } from './storage.js';
+import { salarySnippets, suggestSalary } from './salary-extractor.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export class CapturePanel {
@@ -43,6 +45,8 @@ export class CapturePanel {
   render(busy) {
     const capture = this.current;
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;
+    const salaryMin = posting?.salary_min === '' ? null : posting?.salary_min;
+    const salaryMax = posting?.salary_max === '' ? null : posting?.salary_max;
     const disabled = busy ? 'disabled' : '';
     const warnings = capture ? captureWarnings(capture) : [];
     const resolutions = draft?.resolutions || capture?.resolutions || [];
@@ -105,12 +109,16 @@ export class CapturePanel {
       ${capture.snapshot.candidates.length > 1 ? `<label class="label" for="capture-candidate">WHICH POSTING?</label><select id="capture-candidate" ${disabled}><option value="">Choose a posting</option>${capture.snapshot.candidates.map((c, i) => `<option value="${i}" ${capture.candidate_index === i ? 'selected' : ''}>${esc(c.posting.role_title || 'Untitled')} · ${esc(c.posting.company_name || 'Unknown company')} (${esc(c.adapter)})</option>`).join('')}</select>` : ''}
       ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => ['role_title','company_name','description'].includes(key)).map(field).join('')}
       <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
-      <details><summary>Edit details</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
+      <p class="hint">Salary: ${salaryMin == null && salaryMax == null ? 'Not listed / not extracted' : esc(`${posting.salary_currency || 'Currency unknown'} ${salaryMin == null ? 'Up to ' + salaryMax : salaryMax == null ? 'From ' + salaryMin : salaryMin === salaryMax ? salaryMin : salaryMin + ' – ' + salaryMax}${posting.salary_period ? ' / ' + posting.salary_period.toLowerCase() : ' (period unknown)'}`)}</p>
+      ${['LINKEDIN','JOBSTREET','INDEED'].includes(posting.job_platform) && salaryMin == null && salaryMax == null && salarySnippets(capture.snapshot.candidates[capture.candidate_index]) ? `<button id="capture-salary-ai" type="button" class="button secondary full" ${disabled}>Interpret salary with AI</button><p class="hint">Sends salary excerpts to your configured AI gateway. Review the suggestion before saving.</p>` : ''}
+      <p id="capture-salary-suggestion" class="hint" role="status">${draft?.salaryQuote ? `AI suggestion from: “${esc(draft.salaryQuote)}”. Check the salary fields and confirm review.` : ''}</p>
+      <details ${draft?.salaryQuote ? 'open' : ''}><summary>Edit details</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
       ${resolutionControls ? `<div class="capture-resolutions" ${!unresolvedDecisions && !draft?'hidden':''}><h3>Check these differences</h3>${resolutionControls}</div>` : ''}
       <div class="capture-completeness" ${readiness?.eligible && !draft?'hidden':''}>${clipping.length ? `<p class="hint">The page may hide part of the description.</p><label class="check"><input id="capture-clipping-confirmed" type="checkbox" ${clippingResolved && !draft ? 'checked' : ''} ${disabled}> I expanded the original posting and verified that all its text is included here.</label>` : ''}<label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I checked the title, company and full description against the job page.</label><button id="capture-confirm-completeness" type="button" class="button primary full" disabled>Confirm review</button></div>
       </form>` : ''}
       <details class="capture-evidence"><summary>Sources & review history</summary><p class="hint">${capture.snapshot.candidates.length} source(s) · ${warnings.filter(w=>!INFORMATIONAL_WARNINGS.has(w.code) && !statusFor(w).startsWith('Resolved')).length} review note(s) unresolved · ${capture.reviewed_at && !draft ? 'Reviewed' : 'Needs review'}</p><a href="${esc(capture.snapshot.page_url)}" target="_blank" rel="noreferrer">Original posting ↗</a>
       <div class="capture-evidence-body"><h3>Review notes</h3>${warnings.length?`<ul>${warningList(warnings)}</ul>`:'<p>No warnings.</p>'}
+      ${capture.snapshot.candidates[capture.candidate_index]?.source.salary_excerpt ? `<h4>Salary wording</h4><pre>${esc(capture.snapshot.candidates[capture.candidate_index].source.salary_excerpt)}</pre>` : ''}
       ${capture.snapshot.candidates.map((c, i) => `<article class="capture-source"><h3>Source ${i + 1} · ${esc(c.adapter)}</h3><h4>Page text</h4><pre>${esc(c.source.rendered_text || '(None captured)')}</pre><h4>Structured text</h4><pre>${esc(c.source.structured_text || '(None captured)')}</pre></article>`).join('')}</div><p class="hint">Export capture includes all original evidence and extraction details.</p></details>
       </section>` : ''}
       ${this.fit.render(capture, busy)}
@@ -177,6 +185,16 @@ export class CapturePanel {
       if(assessButton)assessButton.disabled=true;
       app.querySelector('.capture-status').textContent = 'Unsaved changes';
     };
+    on('#capture-salary-ai', 'click', () => {
+      const current = this.current, values = Object.fromEntries(new FormData(form)), resolutions = readResolutions();
+      return task('salary', async () => {
+        const suggestion = await suggestSalary(current.snapshot.candidates[current.candidate_index], (await loadSettings()).settings);
+        if (this.current?.id !== current.id) throw new Error('The selected capture changed. Try again on the intended posting.');
+        for (const key of ['salary_min','salary_max','salary_currency','salary_period']) values[key] = suggestion[key] ?? '';
+        this.drafts.set(current.id, {values, resolutions, reviewed:false, salaryQuote:suggestion.quote});
+        this.transport.delete(current.id); this.readiness.delete(current.id);
+      });
+    });
     const invalidate = (resolutions) => {
       form.querySelector('.capture-completeness').hidden=false;
       form.querySelector('#capture-completeness-confirmed').checked = false;

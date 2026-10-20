@@ -25,7 +25,10 @@ export function composeRequirements(posting) {
   return [description, remaining.length ? `Qualifications:\n${remaining.map(q => `- ${q}`).join('\n')}` : ''].filter(Boolean).join('\n\n');
 }
 export function sourceVariants(candidate) {
-  return [['rendered', 'dom', candidate.source.rendered_text], ['structured', 'jsonld', candidate.source.structured_text]]
+  const rendered = candidate.source.rendered_text;
+  const extra = candidate.source.salary_excerpt?.split('\n').filter(line => !rendered?.includes(line)).join('\n');
+  const withSalary = rendered && extra ? `${rendered}\n\nSalary wording from the selected posting:\n${extra}` : rendered;
+  return [['rendered', 'dom', withSalary], ['structured', 'jsonld', candidate.source.structured_text]]
     .filter(([, , text]) => typeof text === 'string' && text.length > 0).map(([id, method, text]) => ({ id, method, text }));
 }
 export async function contentHash(capture) {

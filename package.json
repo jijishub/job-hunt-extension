@@ -15,6 +15,7 @@
     "test:capture:flow": "node tests/capture-flow-browser.mjs",
     "test:linkedin:title": "node tests/linkedin-title-browser.mjs",
     "test:postings": "node tests/posting-adapters-browser.mjs",
+    "test:salary": "node tests/salary-browser.mjs",
     "test:postings:live": "node tests/posting-adapters-live.mjs",
     "test:linkedin:live": "node tests/linkedin-current-live.mjs",
     "preview": "vite preview --host 127.0.0.1",

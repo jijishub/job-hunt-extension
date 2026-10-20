@@ -2,7 +2,7 @@
 // Reads the current document. LinkedIn capture may expand only its description
 // button and wait for the selected pane. Never follows Apply or calls an API.
 export async function extractPosting(options = {}) {
-  const version = 'posting-pilot-v8';
+  const version = 'posting-pilot-v9';
   const maxText = 120000;
   const warnings = [];
   const promotionalContent = '.jobs-premium-applicant-insights, .job-details-how-you-match, [data-testid="premium-upsell"], [data-ad], .ad-banner-container';
@@ -243,6 +243,34 @@ export async function extractPosting(options = {}) {
           description_characters: context?.text.length || 0, header_job_id: context?.headerId || null, url_job_id: context?.urlId || null } };
     }
   }
+  const isJobstreet = ['jobstreet.com', 'jobstreet.com.ph', 'jobstreet.com.sg', 'jobstreet.com.my', 'jobstreet.co.id'].some(d => host === d || host.endsWith('.' + d));
+  const isIndeed = ['indeed.com', 'indeed.com.ph', 'indeed.co.uk'].some(d => host === d || host.endsWith('.' + d));
+  let board = null;
+  if (isJobstreet || isIndeed) {
+    const url = new URL(location.href);
+    const selectedId = isIndeed ? url.searchParams.get('vjk') || url.searchParams.get('jk') : url.pathname.match(/\/job\/(\d+)/)?.[1] || url.searchParams.get('jobId');
+    const rootSelector = isIndeed ? '#jobsearch-ViewjobPaneWrapper, .jobsearch-ViewJobLayout, [data-testid="jobsearch-ViewjobPaneWrapper"]' : '[data-automation="jobDetailsPage"], [data-automation="jobDetails"]';
+    const bodySelector = isIndeed ? '#jobDescriptionText' : '[data-automation="jobAdDetails"]';
+    const headingSelector = isIndeed ? '.jobsearch-JobInfoHeader-title, [data-testid="jobsearch-JobInfoHeader-title"]' : '[data-automation="job-detail-title"]';
+    let signature = '', since = 0;
+    const deadline = Date.now() + Math.min(6000, Math.max(400, Number(options.waitMs) || 4500));
+    do {
+      const bodies = [...document.querySelectorAll(bodySelector)].filter(visible);
+      const body = bodies.length === 1 ? bodies[0] : null;
+      // Never read salary cards from the search results column.
+      const root = body?.closest(rootSelector) || (isJobstreet && /\/job\/\d+/.test(location.pathname) || isIndeed && location.pathname === '/viewjob' ? body?.closest('main') : null);
+      const heading = root && [...root.querySelectorAll(headingSelector)].find(visible);
+      const id = root?.getAttribute('data-job-id') || null;
+      const prior = globalThis.__jobHuntLastBoardCapture;
+      const text = textOf(body);
+      const valid = selectedId && root && heading && text && !body.closest('[aria-busy="true"]') && !/^loading[.\s]*$/i.test(text) && (!id || id === selectedId) && !(prior?.id !== selectedId && prior?.text === text);
+      const next = valid ? [selectedId, heading.textContent, text, textOf(root)].join('\u0000') : '';
+      if (next !== signature) { signature = next; since = Date.now(); }
+      if (next && Date.now() - since >= 650) { board = { root, body, heading, id: selectedId, title: clean(heading.textContent), text }; break; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    if (!board) return { extractor_version: version, page_url: location.href, captured_at: new Date().toISOString(), candidates: [], warnings: [{ code: 'selected_description_unavailable', message: 'Open the full selected job and wait for its title and description to finish loading, then capture again.' }] };
+  }
   const blank = () => ({ role_title: null, company_name: null, description: '', qualifications: [], location: null,
     work_model: null, job_type: null, salary_min: null, salary_max: null, salary_currency: null, salary_period: null,
     job_url: location.href, seniority_level: null, job_platform: null, first_response_at: null });
@@ -254,6 +282,10 @@ export async function extractPosting(options = {}) {
     if (depth > 12 || ++visited > 2000) { warn(warnings, 'extraction_limit_reached', 'Structured-data traversal limit reached. Some postings may be missing.'); return; }
     if (Array.isArray(value)) { value.forEach((item, i) => collect(item, `${locator}[${i}]`, depth + 1)); return; }
     if (asArray(value['@type']).includes('JobPosting')) {
+      if (board) {
+        const structuredId = typeof value.url === 'string' ? (isIndeed ? new URL(value.url, location.href).searchParams.get('jk') || new URL(value.url, location.href).searchParams.get('vjk') : value.url.match(/\/job\/(\d+)/)?.[1]) : null;
+        if (structuredId ? structuredId !== board.id : clean(scalar(value.title)).toLowerCase() !== board.title.toLowerCase()) return;
+      }
       if (linkedIn) {
         const identifier = typeof value.identifier === 'string' ? value.identifier : value.identifier?.value;
         const id = jobId(value.url) || String(identifier || '').match(/^(?:urn:li:jobPosting:)?(\d+)$/)?.[1];
@@ -319,6 +351,11 @@ export async function extractPosting(options = {}) {
     const models = [...new Set(values.map(model).filter(Boolean))], types = [...new Set(values.map(jobType).filter(Boolean))];
     workplace = models.length === 1 ? models[0] : null;
     employment = types.length === 1 ? types[0] : null;
+  } else if (board) {
+    adapter = isIndeed ? 'indeed-dom' : 'jobstreet-dom'; region = board.body; title = board.title;
+    const read = selector => [...board.root.querySelectorAll(selector)].find(visible)?.textContent;
+    company = read(isIndeed ? '[data-testid="inlineHeader-companyName"], .jobsearch-InlineCompanyRating-companyHeader' : '[data-automation="advertiser-name"]');
+    place = read(isIndeed ? '[data-testid="job-location"], [data-testid="inlineHeader-companyLocation"], .jobsearch-JobInfoHeader-subtitle > div:last-child' : '[data-automation="job-detail-location"]');
   } else if (host === 'cgi.njoyn.com' && [...new URLSearchParams(location.search)].some(([k,v]) => k.toLowerCase() === 'page' && v.toLowerCase() === 'jobdetails')) {
     adapter = 'cgi-njoyn-dom'; region = document.querySelector('#njoynPageContainer .job-desc .job-posting-content, .job-desc .job-posting-content');
     const header = region?.closest('.job-desc')?.querySelector('header');
@@ -354,6 +391,18 @@ export async function extractPosting(options = {}) {
     if (!match) candidates.push(target);
     target.adapter = adapter;
     target.source.rendered_text = rendered;
+    if (linkedIn || board) {
+      const salaryRoot = linkedIn?.header || board?.root;
+      const selectors = linkedIn ? '.job-details-jobs-unified-top-card__job-insight, .jobs-unified-top-card__job-insight, [data-testid="salary"], .salary' : isIndeed ? '#salaryInfoAndJobType, [data-testid="attribute_snippet_testid"], [data-testid="salaryInfoAndJobType"]' : '[data-automation="job-detail-salary"]';
+      const nodes = [...(salaryRoot?.querySelectorAll(selectors) || [])].filter(usable);
+      // LinkedIn compensation may use ordinary spans instead of a salary class.
+      const headerText = linkedIn ? textOf(linkedIn.header) : nodes.map(n => textOf(n)).join('\n');
+      target.source.salary_evidence = [
+        ...nodes.map(n => ({ text: textOf(n), locator: locatorFor(n), kind: 'salary-field' })),
+        ...(headerText ? [{ text: headerText, locator: locatorFor(salaryRoot), kind: 'header' }] : []),
+        { text: rendered, locator: locatorFor(region), kind: 'description' }
+      ];
+    }
     function dom(key, value, locator) {
       const data = typeof value === 'string' ? clean(value) : value;
       if (!data) return;
@@ -361,9 +410,9 @@ export async function extractPosting(options = {}) {
       target.posting[key] = data;
       target.provenance[key] = { method: 'dom', locator };
     }
-    dom('role_title', title, adapter === 'lever-dom' ? '.posting-headline h2' : adapter === 'linkedin-dom' ? locatorFor(linkedIn.heading) : adapter === 'cgi-njoyn-dom' ? '.job-desc > header h1' : 'h1');
-    dom('company_name', company, adapter === 'lever-dom' ? '.main-header-logo img[alt]' : adapter === 'linkedin-dom' ? 'selected pane company name' : 'document.title / #header .company-name');
-    dom('location', place, adapter === 'lever-dom' ? '.posting-categories .location' : adapter === 'linkedin-dom' ? 'selected pane top card location' : adapter === 'cgi-njoyn-dom' ? '.job-desc header: Main location' : '.job__location / #header .location');
+    dom('role_title', title, board ? locatorFor(board.heading) : adapter === 'lever-dom' ? '.posting-headline h2' : adapter === 'linkedin-dom' ? locatorFor(linkedIn.heading) : adapter === 'cgi-njoyn-dom' ? '.job-desc > header h1' : 'h1');
+    dom('company_name', company, board ? 'selected posting employer' : adapter === 'lever-dom' ? '.main-header-logo img[alt]' : adapter === 'linkedin-dom' ? 'selected pane company name' : 'document.title / #header .company-name');
+    dom('location', place, board ? 'selected posting location' : adapter === 'lever-dom' ? '.posting-categories .location' : adapter === 'linkedin-dom' ? 'selected pane top card location' : adapter === 'cgi-njoyn-dom' ? '.job-desc header: Main location' : '.job__location / #header .location');
     dom('work_model', workplace, adapter === 'linkedin-dom' ? 'selected pane explicit job insight' : adapter === 'cgi-njoyn-dom' ? '.job-desc header: explicit work model' : '.posting-categories .workplaceTypes');
     dom('job_type', employment, adapter === 'linkedin-dom' ? 'selected pane explicit employment type' : '.job-desc header: Employment Type');
     if (renderedQualifications?.length) dom('qualifications', renderedQualifications, '.job-posting-content: Required qualifications list');
@@ -372,6 +421,13 @@ export async function extractPosting(options = {}) {
     dom('description', rendered, adapter === 'greenhouse-dom' ? '.job__description / #content' : adapter === 'lever-dom' ? '.content .section-wrapper (posting body)' : adapter === 'cgi-njoyn-dom' ? '.job-desc .job-posting-content (all job-info-row sections)' : adapter === 'linkedin-dom' ? locatorFor(linkedIn.body) : 'job description region');
     if (adapter === 'greenhouse-dom') target.posting.job_platform = 'GREENHOUSE';
     if (adapter === 'lever-dom') target.posting.job_platform = 'LEVER';
+    if (board) {
+      target.posting.job_platform = isIndeed ? 'INDEED' : 'JOBSTREET';
+      target.source.requisition_id = board.id;
+      target.posting.job_url = isIndeed ? `${location.origin}/viewjob?jk=${encodeURIComponent(board.id)}` : `${location.origin}/job/${board.id}`;
+      globalThis.__jobHuntLastBoardCapture = { id: board.id, text: board.text };
+      warn(target.warnings, 'unverified_layout', 'Compare the selected job title, employer and complete description with the page before confirming review.');
+    }
     if (adapter === 'linkedin-dom') {
       target.posting.job_platform = 'LINKEDIN'; target.posting.job_url = `https://www.linkedin.com/jobs/view/${linkedIn.id}/`;
       target.source.requisition_id = linkedIn.id;
@@ -402,6 +458,7 @@ export async function extractPosting(options = {}) {
   }
   if (linkedIn) globalThis.__jobHuntLastLinkedInCapture = { id: linkedIn.id, text: linkedIn.text };
   return { extractor_version: version, page_url: location.href, page_title: document.title, captured_at: new Date().toISOString(), candidates,
+    ...(board ? { board_guard: { root_locator: locatorFor(board.root), body_locator: locatorFor(board.body), title_locator: locatorFor(board.heading), root_text: board.root.textContent, id: board.id, platform: isIndeed ? 'INDEED' : 'JOBSTREET' } } : {}),
     ...(linkedIn ? { selection: { platform: 'LINKEDIN', job_id: linkedIn.id, canonical_url: `https://www.linkedin.com/jobs/view/${linkedIn.id}/` },
       selection_guard: { description_text: linkedIn.rawText, title: linkedIn.title, pane_selector: paneSelector, description_selector: descriptionSelector, title_selector: titleSelector,
         title_missing: !linkedIn.heading,

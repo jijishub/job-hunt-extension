@@ -1,5 +1,6 @@
 import { isExtension } from './storage.js';
 import { extractPosting } from './posting-extractor.js';
+import { extractSalaries } from './salary-extractor.js';
 export async function capturePosting(expectedTabId) {
   const tab = await activePage();
   if (expectedTabId != null && tab.id !== expectedTabId) throw new Error('The active tab changed. Capture again from this tab.');
@@ -7,6 +8,16 @@ export async function capturePosting(expectedTabId) {
   if (!result?.result) throw new Error('The page changed or could not be read. Open the full posting and try again.');
   const current = await chrome.tabs.get(tab.id);
   if (current.url !== result.result.page_url) throw new Error('The posting changed during capture. Capture it again.');
+  if (result.result.board_guard) {
+    const [check] = await chrome.scripting.executeScript({target:{tabId:tab.id}, args:[result.result.board_guard], func:guard => {
+      const root = document.querySelector(guard.root_locator), body = document.querySelector(guard.body_locator), heading = document.querySelector(guard.title_locator);
+      const url = new URL(location.href);
+      const id = guard.platform === 'INDEED' ? url.searchParams.get('vjk') || url.searchParams.get('jk') : url.pathname.match(/\/job\/(\d+)/)?.[1] || url.searchParams.get('jobId');
+      return id === guard.id && root && body && heading && root.contains(body) && root.contains(heading) && root.textContent === guard.root_text;
+    }});
+    if (!check?.result) throw new Error('The selected job changed during capture. Wait for it to load, then capture again.');
+    delete result.result.board_guard;
+  }
   if (result.result.selection_guard) {
     const [check] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [result.result.selection, result.result.selection_guard], func: (selection, guard) => {
       const visible = n => { for (; n; n = n.parentElement) if (n.hidden || n.getAttribute('aria-hidden') === 'true' || getComputedStyle(n).display === 'none' || getComputedStyle(n).visibility === 'hidden') return false; return true; };
@@ -27,7 +38,7 @@ export async function capturePosting(expectedTabId) {
     if (!check?.result) throw new Error('The selected LinkedIn job changed during capture. Wait for its description, then capture again.');
     delete result.result.selection_guard;
   }
-  return result.result;
+  return extractSalaries(result.result);
 }
 export async function activePage() {
   if (!isExtension) throw new Error('Page filling works in the installed extension. Load the build folder in chrome://extensions.');
