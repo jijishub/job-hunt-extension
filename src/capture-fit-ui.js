@@ -100,7 +100,7 @@ export class CaptureFitPanel {
     const capture = this.owner.current;
     if (!capture || this.owner.drafts.has(capture.id) || this.preferenceDraft) throw new Error('Save current corrections, review and preferences first.');
     const connection = await this.delivery.connection();
-    if (!connection?.verified || Date.now() >= connection.expires_at) throw new Error('Connect Job Hunt with a current tracker credential first.');
+    if (!connection?.verified || (connection.expires_at != null && Date.now() >= connection.expires_at)) throw new Error('Connect Job Hunt with a current tracker credential first.');
     // A frozen or delivered capture is immutable. Continue that delivery before
     // doing any AI work; never change its bytes or manufacture a new capture ID.
     const existing = (await this.delivery.records()).find(r => r.id === capture.id);
@@ -133,7 +133,7 @@ export class CaptureFitPanel {
   }
   renderSettings(busy) {
     const c=this.connection, disabled=busy?'disabled':'';
-    const connected=c?.verified && Date.now()<c.expires_at;
+    const connected=c?.verified && (c.expires_at == null || Date.now()<c.expires_at);
     const recoverable=this.deliveries.filter(r=>!['delivered','stopped','conflict','too_large','validation_error'].includes(r.state));
     const label=r=>{try{return JSON.parse(r.body).posting?.role_title || 'Saved posting';}catch{return 'Saved posting';}};
     return `<section class="card tracker-settings"><h2>Job Hunt connection</h2>
@@ -142,7 +142,7 @@ export class CaptureFitPanel {
       <form id="tracker-connect-form"><label class="label" for="tracker-origin">Server address</label><input id="tracker-origin" type="url" value="${esc(c?.origin || JOB_HUNT_ORIGIN)}" required ${disabled}>
       <label class="label" for="tracker-credential">${c?'New extension credential':'Extension credential'}</label><input id="tracker-credential" type="password" autocomplete="off" required ${disabled}>
       <button class="button secondary full" ${disabled}>${c?'Update connection':'Connect Job Hunt'}</button></form>
-      ${c?`<p class="hint">Credential expires ${esc(new Date(c.expires_at).toLocaleString())}</p><button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect Job Hunt</button>`:''}
+      ${c?`<p class="hint">${c.expires_at ? `Credential expires ${esc(new Date(c.expires_at).toLocaleString())}` : 'Connected with persistent extension credential'}</p><button id="tracker-disconnect" class="text-button" ${disabled}>Disconnect Job Hunt</button>`:''}
       </section><section class="card"><h2>Additional preference notes</h2><p class="hint">Optional notes shared across tabs. ${c?.capabilities.preferences?'Added to your saved Job Hunt preferences.':'Used when Job Hunt preferences are not shared.'}</p>
       <form id="fit-preferences-form"><textarea id="fit-preferences" aria-label="Additional preference notes" maxlength="12000" rows="3" ${disabled}>${esc(this.preferenceDraft?this.preferenceDraftText:this.localPreferences?.notes || '')}</textarea><button class="button secondary full" ${disabled}>Save notes</button></form></section>
       ${recoverable.length?`<section class="card"><h2>Unfinished saves</h2><p class="hint">Retrying checks the original save and never runs AI again.</p>${recoverable.map(r=>`<article><h3>${esc(label(r))}</h3>${r.error?`<p class="hint">${esc(r.error)}</p>`:''}<button data-delivery-send="${esc(r.id)}" class="button secondary full" ${disabled}>Retry save</button></article>`).join('')}</section>`:''}`;
@@ -152,7 +152,7 @@ export class CaptureFitPanel {
     const s=this.runtime.getState(), disabled=busy?'disabled':'';
     const current=this.jobs.find(j=>this.matches(j,capture));
     const latest=this.jobs.find(j=>j.inputs.capture_id===capture.id && j.inputs.resume.id===`resume-slot-${s.selected+1}`);
-    const c=this.connection, connected=c?.verified && Date.now()<c.expires_at;
+    const c=this.connection, connected=c?.verified && (c.expires_at == null || Date.now()<c.expires_at);
     const delivery=this.deliveries.find(r=>r.id===capture.id), saved=delivery?.state==='delivered';
     const terminal=delivery && ['stopped','conflict','too_large','validation_error'].includes(delivery.state);
     const reviewed=this.owner.readiness.get(capture.id)?.eligible && !this.owner.drafts.has(capture.id);

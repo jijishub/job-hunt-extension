@@ -93,10 +93,8 @@ try {
   },id);
   const captureAndReview=async title=>{
     await panel.locator('#capture-posting').click();
-    await panel.locator('#capture-role_title').waitFor();await idle();
-    assert.equal(await panel.locator('#capture-role_title').inputValue(),title);
-    if(await panel.locator('#capture-clipping-confirmed').count())await panel.locator('#capture-clipping-confirmed').check();
-    await panel.locator('#capture-completeness-confirmed').check();
+    await panel.locator('#capture-confirm-completeness').waitFor();await idle();
+    assert.match(await panel.locator('.capture-preview').innerText(),new RegExp(title));
     await panel.locator('#capture-confirm-completeness').click();await idle();
     assert.equal(await panel.locator('#fit-assess').isEnabled(),true);
   };
@@ -147,10 +145,11 @@ try {
   await panel.waitForFunction(()=>!document.querySelector('#capture-role_title'));
   await idle();await captureAndReview('Platform Engineer');
   await panel.locator('#fit-resume').selectOption('1');await idle();
+  await panel.locator('#capture-edit-details summary').click();
   await panel.locator('#capture-description').fill((await panel.locator('#capture-description').inputValue())+'\n- REVIEW_EDIT_B');
   assert.equal(await panel.locator('.capture-completeness').isVisible(),true);
   assert.equal(await panel.locator('#fit-assess').isDisabled(),true);
-  await panel.locator('#capture-completeness-confirmed').check();await panel.locator('#capture-confirm-completeness').click();await idle();
+  await panel.locator('#capture-confirm-completeness').click();await idle();
   aiMode='failure';await panel.locator('#fit-assess').click();await panel.locator('.fit-error').filter({hasText:'503'}).waitFor();await idle();
   assert.equal(await panel.locator('.fit-result').count(),0);assert.equal(await panel.locator('#tracker-save').isDisabled(),true);
   assert.equal(captures().length,1);

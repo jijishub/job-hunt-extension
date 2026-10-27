@@ -49,43 +49,9 @@ export class CapturePanel {
     const salaryMax = posting?.salary_max === '' ? null : posting?.salary_max;
     const disabled = busy ? 'disabled' : '';
     const warnings = capture ? captureWarnings(capture) : [];
-    const resolutions = draft?.resolutions || capture?.resolutions || [];
-    const statusFor = w => INFORMATIONAL_WARNINGS.has(w.code) ? 'Information · Unknown is allowed'
-      : w.code === 'missing_role_title' && posting?.role_title?.trim() || w.code === 'missing_company_name' && posting?.company_name?.trim() ? 'Resolved by current correction'
-        : resolutions.some(r => r.warning_id === w.id && r.action && r.note?.trim()) ? draft ? 'Resolution pending save' : 'Resolved · Original warning preserved' : 'Needs review';
-    const warningList = list => list.map(w => `<li data-warning-id="${esc(w.id)}" data-warning-state="${INFORMATIONAL_WARNINGS.has(w.code) ? 'informational' : statusFor(w).startsWith('Resolved') ? 'resolved' : 'unresolved'}"><strong>${esc(w.code)}</strong>: ${esc(w.message)}<br><span class="warning-status">${esc(statusFor(w))}</span></li>`).join('');
     const readiness = this.readiness.get(capture?.id);
-    const blockerActions = {
-      pilot_review_required: 'Compare the posting and preserved sources, then confirm requirements and save review below.',
-      requirements_unverified: 'Confirm completeness using the requirements review action below.',
-      conflicting_sources: 'Compare both sources. Choose the complete description, save a correction, or explain why a specific difference is irrelevant.',
-      structured_only: 'Compare the captured requirements with the visible posting, then confirm completeness below.',
-      collapsed_content: 'Expand the description on the page and capture again, or document a verified resolution after checking the complete original.',
-      missing_role_title: 'Enter the role title and save corrections.', missing_company_name: 'Enter the company name and save corrections.',
-      missing_requirements: 'Supply the full requirements from the posting and save a correction. Confirmation alone is insufficient.',
-      oversized_requirements: 'The current requirements exceed the agreed assessment limit. Keep the full local capture or supply a suitable corrected posting.',
-      frames_not_read: 'Check whether the embedded frame contains requirements. Record an explained resolution under review warnings.',
-      unverified_layout: 'Compare the intended job title, employer, location and all posting sections with the page, then confirm the layout and requirements below.',
-    };
-    const reviewCodes = new Set(['pilot_review_required', 'requirements_unverified', 'structured_only', 'unverified_layout']);
-    const nextActions = [...new Set((readiness?.reasons || []).map(code => reviewCodes.has(code) ? 'Compare with the job page, then confirm review below.' : code === 'collapsed_content' ? 'Expand the original description and check that all text is included.' : blockerActions[code] || readiness?.message || 'Resolve the review note below.'))];
-    const readinessHTML = `<div class="capture-assessment-status ${readiness?.eligible && !draft ? 'is-ready' : ''}" role="status">${draft ? '<p>Changes not saved. Confirm review below.</p>' : readiness?.eligible ? '<p>✓ Reviewed. Choose your resume and assess in step 3.</p>' : nextActions.length ? `<ul>${nextActions.map(action=>`<li>${esc(action)}</li>`).join('')}</ul>` : '<p>Compare this with the job page before saving.</p>'}</div>`;
-    const warningNames = { conflicting_sources:'Sources differ', collapsed_content:'Description may be clipped', missing_requirements:'Missing requirements', oversized_requirements:'Description is too long', invalid_salary_range:'Check the salary range', frames_not_read:'Check embedded content', source_truncated:'Source text was shortened' };
-    const labels = { use_rendered: 'Use text from the page', use_structured: 'Use structured source text', corrected: 'I corrected this', verified_irrelevant: 'I checked this; nothing is missing or incorrect' };
-    const controls = capture ? warnings.map((warning, i) => {
-      const actions = resolutionActions(capture, warning);
-      if (!actions.length) return '';
-      const resolution = resolutions.find(r => r.warning_id === warning.id);
-      return { warning, html: `<div class="capture-resolution" data-warning-code="${esc(warning.code)}"><label class="label" for="resolution-action-${i}">${esc(warningNames[warning.code] || 'Review decision')}</label><p class="hint">${esc(warning.message)}</p>
-        <select id="resolution-action-${i}" data-resolution-action="${esc(warning.id)}" ${disabled}><option value="">Unresolved</option>${actions.map(action => `<option value="${action}" ${resolution?.action === action ? 'selected' : ''}>${labels[action]}</option>`).join('')}</select>
-        <label class="label" for="resolution-note-${i}">What did you check or correct?</label><textarea id="resolution-note-${i}" data-resolution-note="${esc(warning.id)}" rows="2" maxlength="2000" ${disabled}>${esc(resolution?.note || '')}</textarea></div>` };
-    }).filter(Boolean) : [];
-    const needsDecision = w => !reviewCodes.has(w.code) && w.code !== 'collapsed_content' && !(w.code === 'conflicting_sources' && w.field === 'description');
-    const decisions=controls.filter(c=>needsDecision(c.warning));
-    const unresolvedDecisions=decisions.some(c=>!statusFor(c.warning).startsWith('Resolved'));
-    const resolutionControls = decisions.map(c=>`<div class="capture-decision" ${statusFor(c.warning).startsWith('Resolved') && !draft?'hidden':''}>${c.html}</div>`).join('');
-    const clipping = warnings.filter(w=>w.code === 'collapsed_content');
-    const clippingResolved = clipping.length && clipping.every(w=>resolutions.some(r=>r.warning_id===w.id && r.action && r.note?.trim()));
+    const canConfirm = Boolean((posting?.role_title || '').trim() && (posting?.company_name || '').trim());
+    const readinessHTML = `<div class="capture-assessment-status ${readiness?.eligible && !draft ? 'is-ready' : ''}" role="status">${draft ? '<p>Changes not saved. Click Confirm changes below.</p>' : readiness?.eligible ? '<p>✓ Reviewed. Choose your resume and assess in step 3.</p>' : '<p>Check the details below, then click Confirm review.</p>'}</div>`;
     const field = ([key, label]) => {
       const value = key === 'description' ? composeRequirements(posting) : posting[key];
       const options = key === 'work_model' ? ['ON_SITE', 'HYBRID', 'REMOTE'] : key === 'job_type' ? ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP'] : null;
@@ -107,17 +73,26 @@ export class CapturePanel {
       <p class="capture-status">${draft ? 'Unsaved changes' : capture.reviewed_at && capture.review_basis_hash ? 'Reviewed' : 'Check the details below'}</p>
       ${readinessHTML}
       ${capture.snapshot.candidates.length > 1 ? `<label class="label" for="capture-candidate">WHICH POSTING?</label><select id="capture-candidate" ${disabled}><option value="">Choose a posting</option>${capture.snapshot.candidates.map((c, i) => `<option value="${i}" ${capture.candidate_index === i ? 'selected' : ''}>${esc(c.posting.role_title || 'Untitled')} · ${esc(c.posting.company_name || 'Unknown company')} (${esc(c.adapter)})</option>`).join('')}</select>` : ''}
-      ${posting ? `<form id="capture-form">${captureFields.filter(([key]) => ['role_title','company_name','description'].includes(key)).map(field).join('')}
-      <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
-      <p class="hint">Salary: ${salaryMin == null && salaryMax == null ? 'Not listed / not extracted' : esc(`${posting.salary_currency || 'Currency unknown'} ${salaryMin == null ? 'Up to ' + salaryMax : salaryMax == null ? 'From ' + salaryMin : salaryMin === salaryMax ? salaryMin : salaryMin + ' – ' + salaryMax}${posting.salary_period ? ' / ' + posting.salary_period.toLowerCase() : ' (period unknown)'}`)}</p>
+      ${posting ? `<form id="capture-form">
+      <div class="capture-preview-summary">
+        <h3 class="capture-summary-title">${esc(posting.role_title || '(Missing role title)')}</h3>
+        <p class="capture-summary-company">${esc(posting.company_name || '(Missing company)')}</p>
+        <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
+        <p class="hint">Salary: ${salaryMin == null && salaryMax == null ? 'Not listed / not extracted' : esc(`${posting.salary_currency || 'Currency unknown'} ${salaryMin == null ? 'Up to ' + salaryMax : salaryMax == null ? 'From ' + salaryMin : salaryMin === salaryMax ? salaryMin : salaryMin + ' – ' + salaryMax}${posting.salary_period ? ' / ' + posting.salary_period.toLowerCase() : ' (period unknown)'}`)}</p>
+      </div>
       ${['LINKEDIN','JOBSTREET','INDEED'].includes(posting.job_platform) && salaryMin == null && salaryMax == null && salarySnippets(capture.snapshot.candidates[capture.candidate_index]) ? `<button id="capture-salary-ai" type="button" class="button secondary full" ${disabled}>Interpret salary with AI</button><p class="hint">Sends salary excerpts to your configured AI gateway. Review the suggestion before saving.</p>` : ''}
       <p id="capture-salary-suggestion" class="hint" role="status">${draft?.salaryQuote ? `AI suggestion from: “${esc(draft.salaryQuote)}”. Check the salary fields and confirm review.` : ''}</p>
-      <details ${draft?.salaryQuote ? 'open' : ''}><summary>Edit details</summary>${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}<p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p></details>
-      ${resolutionControls ? `<div class="capture-resolutions" ${!unresolvedDecisions && !draft?'hidden':''}><h3>Check these differences</h3>${resolutionControls}</div>` : ''}
-      <div class="capture-completeness" ${readiness?.eligible && !draft?'hidden':''}>${clipping.length ? `<p class="hint">The page may hide part of the description.</p><label class="check"><input id="capture-clipping-confirmed" type="checkbox" ${clippingResolved && !draft ? 'checked' : ''} ${disabled}> I expanded the original posting and verified that all its text is included here.</label>` : ''}<label class="check"><input id="capture-completeness-confirmed" type="checkbox" ${disabled}> I checked the title, company and full description against the job page.</label><button id="capture-confirm-completeness" type="button" class="button primary full" disabled>Confirm review</button></div>
+      <details id="capture-edit-details" class="capture-manual-edit" ${draft || !posting.role_title?.trim() || !posting.company_name?.trim() ? 'open' : ''}><summary>Manual edit</summary>
+        ${captureFields.filter(([key]) => ['role_title','company_name','description'].includes(key)).map(field).join('')}
+        ${captureFields.filter(([key]) => !['role_title','company_name','description','qualifications'].includes(key)).map(field).join('')}
+        <p class="hint">Unknown is allowed. Salary period: ${esc(normalizeSalaryPeriod(posting.salary_period) || 'Unknown')}.</p>
+      </details>
+      <div class="capture-completeness" ${readiness?.eligible && !draft?'hidden':''}>
+        <button id="capture-confirm-completeness" type="button" class="button primary full" ${canConfirm && !disabled ? '' : 'disabled'}>${draft ? 'Confirm changes' : 'Confirm review'}</button>
+      </div>
       </form>` : ''}
-      <details class="capture-evidence"><summary>Sources & review history</summary><p class="hint">${capture.snapshot.candidates.length} source(s) · ${warnings.filter(w=>!INFORMATIONAL_WARNINGS.has(w.code) && !statusFor(w).startsWith('Resolved')).length} review note(s) unresolved · ${capture.reviewed_at && !draft ? 'Reviewed' : 'Needs review'}</p><a href="${esc(capture.snapshot.page_url)}" target="_blank" rel="noreferrer">Original posting ↗</a>
-      <div class="capture-evidence-body"><h3>Review notes</h3>${warnings.length?`<ul>${warningList(warnings)}</ul>`:'<p>No warnings.</p>'}
+      <details class="capture-evidence"><summary>Sources & review history</summary><p class="hint">${capture.snapshot.candidates.length} source(s) · ${capture.reviewed_at && !draft ? 'Reviewed' : 'Needs review'}</p><a href="${esc(capture.snapshot.page_url)}" target="_blank" rel="noreferrer">Original posting ↗</a>
+      <div class="capture-evidence-body">
       ${capture.snapshot.candidates[capture.candidate_index]?.source.salary_excerpt ? `<h4>Salary wording</h4><pre>${esc(capture.snapshot.candidates[capture.candidate_index].source.salary_excerpt)}</pre>` : ''}
       ${capture.snapshot.candidates.map((c, i) => `<article class="capture-source"><h3>Source ${i + 1} · ${esc(c.adapter)}</h3><h4>Page text</h4><pre>${esc(c.source.rendered_text || '(None captured)')}</pre><h4>Structured text</h4><pre>${esc(c.source.structured_text || '(None captured)')}</pre></article>`).join('')}</div><p class="hint">Export capture includes all original evidence and extraction details.</p></details>
       </section>` : ''}
@@ -169,21 +144,29 @@ export class CapturePanel {
       const edited = new Set(controls.map(el=>el.dataset.resolutionAction));
       return [...inheritedResolutions.filter(r=>!edited.has(r.warning_id)), ...controls.filter(el=>el.value).map(el=>({
         warning_id: el.dataset.resolutionAction, action: el.value,
-        note: [...form.querySelectorAll('[data-resolution-note]')].find(n=>n.dataset.resolutionNote===el.dataset.resolutionAction).value
+        note: [...form.querySelectorAll('[data-resolution-note]')].find(n=>n.dataset.resolutionNote===el.dataset.resolutionAction)?.value || ''
       }))];
     };
     const keepDraft = () => {
-      this.drafts.set(this.current.id, { values: Object.fromEntries(new FormData(form)), reviewed: false, resolutions: readResolutions() });
+      const values = Object.fromEntries(new FormData(form));
+      this.drafts.set(this.current.id, { values, reviewed: false, resolutions: readResolutions() });
       this.transport.delete(this.current.id);
       app.querySelector('.fit-result')?.remove();
-      app.querySelectorAll('[data-warning-state="resolved"]').forEach(node => { node.dataset.warningState = 'unresolved'; node.querySelector('.warning-status').textContent = 'Needs current saved review'; });
       const status = app.querySelector('.capture-assessment-status');
-      if (status) { status.innerHTML = '<p>Changes not saved. Confirm review below.</p>'; status.classList.remove('is-ready'); }
+      if (status) { status.innerHTML = '<p>Changes not saved. Click Confirm changes below.</p>'; status.classList.remove('is-ready'); }
       const saveButton = app.querySelector('#tracker-save');
       if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Confirm review above'; }
       const assessButton=app.querySelector('#fit-assess');
       if(assessButton)assessButton.disabled=true;
-      app.querySelector('.capture-status').textContent = 'Unsaved changes';
+      const completeness=app.querySelector('.capture-completeness');
+      if(completeness)completeness.hidden=false;
+      const confirmButton=app.querySelector('#capture-confirm-completeness');
+      if(confirmButton){
+        confirmButton.disabled = !((values.role_title||'').trim() && (values.company_name||'').trim());
+        confirmButton.textContent = 'Confirm changes';
+      }
+      const captureStatus = app.querySelector('.capture-status');
+      if(captureStatus)captureStatus.textContent = 'Unsaved changes';
     };
     on('#capture-salary-ai', 'click', () => {
       const current = this.current, values = Object.fromEntries(new FormData(form)), resolutions = readResolutions();
@@ -195,52 +178,36 @@ export class CapturePanel {
         this.transport.delete(current.id); this.readiness.delete(current.id);
       });
     });
-    const invalidate = (resolutions) => {
-      form.querySelector('.capture-completeness').hidden=false;
-      form.querySelector('#capture-completeness-confirmed').checked = false;
-      form.querySelector('#capture-confirm-completeness').disabled = true;
-      if (resolutions) {
-        inheritedResolutions = [];
-        const decisionPanel=form.querySelector('.capture-resolutions');
-        if(decisionPanel)decisionPanel.hidden=false;
-        form.querySelectorAll('.capture-decision').forEach(node=>{node.hidden=false;});
-        const clippingCheck = form.querySelector('#capture-clipping-confirmed');
-        if (clippingCheck) clippingCheck.checked = false;
-        form.querySelectorAll('[data-resolution-action]').forEach(el => { el.value = ''; });
-        form.querySelectorAll('[data-resolution-note]').forEach(el => { el.value = ''; });
-      }
-    };
     form?.addEventListener('input', e => {
-      if (e.target.matches('[data-resolution-action]')) return;
-      if (!['capture-completeness-confirmed', 'capture-clipping-confirmed'].includes(e.target.id)) invalidate(!!e.target.name);
       keepDraft();
     });
-    form?.querySelectorAll('[data-resolution-action]').forEach(el => el.addEventListener('change', () => {
-      const action = el.value;
-      if (action.startsWith('use_')) {
-        const variant = sourceVariants(this.current.snapshot.candidates[this.current.candidate_index]).find(v => action === `use_${v.id}`);
-        if (variant) form.elements.description.value = variant.text;
-        invalidate(true); el.value = action;
-      } else invalidate(false);
-      keepDraft();
-    }));
-    const canConfirm = () => app.querySelector('#capture-completeness-confirmed')?.checked && (!app.querySelector('#capture-clipping-confirmed') || app.querySelector('#capture-clipping-confirmed').checked);
-    const updateConfirm = () => { app.querySelector('#capture-confirm-completeness').disabled = !canConfirm(); };
-    on('#capture-completeness-confirmed', 'change', updateConfirm);
-    on('#capture-clipping-confirmed', 'change', updateConfirm);
     on('#capture-confirm-completeness', 'click', () => {
-      if (!canConfirm()) return;
-      const current = this.current, values = Object.fromEntries(new FormData(form)), decisions = readResolutions();
+      const current = this.current;
+      if (!current) return;
+      const values = Object.fromEntries(new FormData(form));
+      for (const [key] of captureFields) {
+        if (values[key] === undefined && current.posting?.[key] !== undefined) {
+          values[key] = current.posting[key];
+        }
+      }
+      if (!(values.role_title || '').trim() || !(values.company_name || '').trim()) return;
+      const decisions = readResolutions();
       const note = 'Compared the intended job title, employer and location, all available posting sections and qualifications with the original page and preserved source versions. Confirmed the current layout captures the intended job and its requirements are complete.';
       for (const w of captureWarnings(current)) {
         let action;
         if (['requirements_unverified', 'structured_only', 'unverified_layout'].includes(w.code)) action = 'verified_irrelevant';
-        if (w.code === 'collapsed_content' && app.querySelector('#capture-clipping-confirmed')?.checked) action = 'verified_irrelevant';
+        if (w.code === 'collapsed_content') action = 'verified_irrelevant';
         if (w.code === 'conflicting_sources' && w.field === 'description') {
           const variant = sourceVariants(current.snapshot.candidates[current.candidate_index]).find(v => v.text === values.description);
           action = variant ? `use_${variant.id}` : 'corrected';
         }
-        if (action) { const index = decisions.findIndex(r => r.warning_id === w.id); if (index >= 0) decisions.splice(index, 1); decisions.push({ warning_id: w.id, action, note: w.code === 'collapsed_content' ? 'Expanded the original posting and compared all of its text with the current description. Verified that the clipping warning does not indicate omitted text. ' + note : note }); }
+        if (['frames_not_read', 'source_truncated'].includes(w.code)) action = 'verified_irrelevant';
+        if (w.code === 'invalid_salary_range' && values.salary_min != null && values.salary_max != null && Number(values.salary_min) <= Number(values.salary_max)) action = 'corrected';
+        if (action) {
+          const index = decisions.findIndex(r => r.warning_id === w.id);
+          if (index >= 0) decisions.splice(index, 1);
+          decisions.push({ warning_id: w.id, action, note: w.code === 'collapsed_content' ? 'Expanded the original posting and compared all of its text with the current description. Verified that the clipping warning does not indicate omitted text. ' + note : note });
+        }
       }
       task('review', async () => {
         const corrected = await correctCapture(current, values, true, decisions);

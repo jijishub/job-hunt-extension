@@ -58,7 +58,7 @@ try {
   assert.equal(aiCalls,1);assert.equal(await panel.locator('#capture-salary_min').inputValue(),'30000');assert.equal(await panel.locator('#capture-salary_max').inputValue(),'45000');
   assert.match(await panel.locator('.capture-status').textContent(),/Unsaved changes/);
   assert.equal(await panel.locator('#fit-assess').isDisabled(),true);
-  await panel.locator('#capture-completeness-confirmed').check();await panel.locator('#capture-confirm-completeness').click();
+  await panel.locator('#capture-confirm-completeness').click();
   await panel.locator('.capture-status').filter({hasText:'Reviewed'}).waitFor();
   const saved = await panel.evaluate(async()=>Object.entries(await chrome.storage.local.get(null)).filter(([k])=>k.startsWith('posting-capture:')).map(([,v])=>v));
   assert.equal(saved[0].posting.salary_min,30000);assert.equal(saved[0].posting.salary_max,45000);assert.ok(saved[0].corrections.salary_min);assert.equal(aiCalls,1);

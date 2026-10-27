@@ -24,21 +24,29 @@ export class CaptureDelivery {
     origin = trackerOrigin(origin);
     if (typeof credential !== 'string' || !credential.trim()) throw new Error('Enter a separate tracker credential from My preferences → Job Hunt extension.');
     const response = await this.request(origin, '/api/v1/connection', credential);
-    if (!response.ok) throw new Error(response.status === 404 ? 'The Job Hunt capture API is not deployed at this address yet. Deploy the tracker integration first.' : response.status === 401 ? 'The Job Hunt credential is invalid or expired. Create a new credential in My preferences → Job Hunt extension.' : `Job Hunt connection returned ${response.status}. Reconnect or check access.`);
-    if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('Job Hunt returned a web page instead of the capture API. Deploy the API and check authentication/proxy routing.');
+    if (!response.ok) {
+      const err = new Error(response.status === 404 ? 'The Job Hunt capture API is not deployed at this address yet. Deploy the tracker integration first.' : response.status === 401 ? 'The Job Hunt credential is invalid or expired. Create a new credential in My preferences → Job Hunt extension.' : `Job Hunt connection returned ${response.status}. Reconnect or check access.`);
+      err.status = response.status;
+      throw err;
+    }
+    if (!response.headers.get('Content-Type')?.includes('application/json')) {
+      const err = new Error('Job Hunt returned a web page instead of the capture API. Deploy the API and check authentication/proxy routing.');
+      err.status = response.status;
+      throw err;
+    }
     const data = await response.json();
     if (!data.account?.id || typeof data.account.id !== 'string' || typeof data.account.email !== 'string' || data.capabilities?.capture_uploads !== true ||
       !data.capabilities.schema_versions?.includes(1) || !Number.isSafeInteger(data.limits?.max_capture_bytes) || data.limits.max_capture_bytes < 1 ||
       !Number.isSafeInteger(data.limits.max_status_ids) || data.limits.max_status_ids < 1) throw new Error('Tracker connection capability response is incompatible.');
     if (data.expires_at != null && (typeof data.expires_at !== 'string' || !Number.isFinite(Date.parse(data.expires_at)) || Date.parse(data.expires_at) <= this.now())) throw new Error('The Job Hunt credential has expired or has an invalid expiration. Create a new credential.');
-    if (origin === JOB_HUNT_ORIGIN && !data.expires_at) throw new Error('The production Job Hunt API must return the credential expires_at field. Deploy the current capture API first.');
     return data;
   }
   async connect(origin, credential) {
     origin = trackerOrigin(origin);
-    const data = await this.verify(origin, credential), old = await this.connection();
+    const data = await this.verify(origin, credential);
+    const expiresAt = data.expires_at ? Date.parse(data.expires_at) : null;
     const connection = { origin, credential, account: data.account, capabilities: data.capabilities, limits: data.limits, verified_at: new Date(this.now()).toISOString(),
-      expires_at: data.expires_at ? Date.parse(data.expires_at) : old?.credential === credential && old.origin === origin ? Math.min(old.expires_at, this.now() + 86400000) : this.now() + 86400000, verified: true };
+      expires_at: expiresAt, verified: true };
     await this.store.set('tracker-connection', connection);
     for (const record of await this.records()) if (!terminal.has(record.state) && (record.origin !== origin || record.account_id !== data.account.id)) {
       record.state = 'paused'; record.error = 'Connected account/origin changed. This frozen delivery belongs to another account.'; await this.save(record);
@@ -52,7 +60,7 @@ export class CaptureDelivery {
   async save(record) { await this.store.set('capture-delivery:' + record.id, record); return record; }
   async freeze(prepared, guard, expectedConnection = null) {
     const c = await this.connection();
-    if (!c?.verified || this.now() >= c.expires_at) throw new Error('Connect Job Hunt with a current credential before saving.');
+    if (!c?.verified || (c.expires_at != null && this.now() >= c.expires_at)) throw new Error('Connect Job Hunt with a current credential before saving.');
     if (expectedConnection && (c.origin !== expectedConnection.origin || c.account.id !== expectedConnection.account_id)) throw new Error('The connected Job Hunt account changed during preparation. Nothing was uploaded; reconnect the intended account.');
     trackerOrigin(c.origin);
     if (JSON.stringify(JSON.parse(prepared.json)) !== JSON.stringify(prepared.payload) || new TextEncoder().encode(prepared.json).byteLength !== prepared.bytes) throw new Error('Prepared request content/byte count changed. Prepare it again.');
@@ -88,7 +96,7 @@ export class CaptureDelivery {
       const r = await this.store.get('capture-delivery:' + id), c = await this.connection();
       if (!r) throw new Error('Frozen delivery not found.');
       if (terminal.has(r.state)) return r;
-      if (!c?.verified || this.now() >= c.expires_at || c.account.id !== r.account_id || c.origin !== r.origin) {
+      if (!c?.verified || (c.expires_at != null && this.now() >= c.expires_at) || c.account.id !== r.account_id || c.origin !== r.origin) {
         r.state = 'paused'; r.error = 'Reconnect the original account and origin with a current credential.'; return this.save(r);
       }
       if (r.next_retry_at && this.now() < r.next_retry_at) return r;
@@ -104,8 +112,11 @@ export class CaptureDelivery {
           c.verified = false; await this.store.set('tracker-connection', c); r.state = 'paused'; r.error = 'Account or capabilities changed. Reconnect before delivery.'; return this.save(r);
         }
         if (new TextEncoder().encode(r.body).byteLength > verified.limits.max_capture_bytes) { r.state = 'too_large'; r.error = 'Tracker byte limit changed. The complete frozen capture remains local.'; return this.save(r); }
-      } catch {
-        c.verified = false; await this.store.set('tracker-connection', c); r.state = 'paused'; r.error = 'Connection verification failed. Reconnect or check access.'; return this.save(r);
+      } catch (err) {
+        if (err.status === 401 || err.status === 403) {
+          c.verified = false; await this.store.set('tracker-connection', c);
+        }
+        r.state = 'paused'; r.error = (err.status === 401 || err.status === 403) ? 'Connection verification failed. Reconnect or check access.' : (err.message || 'Connection verification failed.'); return this.save(r);
       }
       if (checkReceipt && r.lookups < 3) {
         r.lookups++; await this.save(r);

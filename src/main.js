@@ -305,7 +305,7 @@ function bind() {
 if (isExtension) chrome.storage.onChanged.addListener((changes, area) => {
   const workspaceChange=area==='session' && Object.keys(changes).some(k=>k.startsWith('capture-tab:'));
   if (!workspaceChange && (area !== 'local' || !Object.keys(changes).some(k => k === 'state' || k === 'capture-active-id' || k === 'fit-preferences' || k === 'tracker-preferences' || k === 'tracker-connection' || /^(posting-capture:|fit-job:|capture-delivery:)/.test(k)))) return;
-  if(changes['tracker-connection'])capturePanel.fit.setLiveActive(false);
+  if(changes['tracker-connection'])capturePanel.fit.setLiveActive(tab === 'capture' && document.visibilityState === 'visible');
   const prefChange=changes['tracker-preferences'];
   if(prefChange && (prefChange.oldValue?.preferences_hash !== prefChange.newValue?.preferences_hash || prefChange.oldValue?.origin !== prefChange.newValue?.origin || prefChange.oldValue?.account_id !== prefChange.newValue?.account_id)) {capturePanel.transport.clear();app.querySelector('.fit-result')?.remove();}
   if (busy) { storageRefreshPending = true; return; }

@@ -15,11 +15,11 @@ export class TrackerPreferences {
   state(status, error = '') { this.status = status; this.error = error; this.onStatus(); }
   async authorized(c) {
     const current = await this.delivery.connection();
-    if (!same(c,current) || !current.verified || Date.now() >= current.expires_at || current.capabilities.preferences !== true) throw new Error('Reconnect Job Hunt with preference sharing enabled.');
+    if (!same(c,current) || !current.verified || (current.expires_at != null && Date.now() >= current.expires_at) || current.capabilities.preferences !== true) throw new Error('Reconnect Job Hunt with preference sharing enabled.');
   }
   async cached(c) {
     const snapshot = await workStore.get(KEY);
-    return c?.verified && c.capabilities.preferences === true && Date.now() < c.expires_at && snapshot?.origin === c.origin && snapshot?.account_id === c.account.id ? snapshot : null;
+    return c?.verified && c.capabilities.preferences === true && (c.expires_at == null || Date.now() < c.expires_at) && snapshot?.origin === c.origin && snapshot?.account_id === c.account.id ? snapshot : null;
   }
   async accept(raw,c) {
     const work = async () => {
@@ -59,7 +59,7 @@ export class TrackerPreferences {
   }
   stop() { this.active=false;this.controller?.abort();this.controller=null;clearTimeout(this.retryTimer);this.retryTimer=null;this.connection=null;this.state('off'); }
   setActive(active,c) {
-    if (!active || !c?.verified || Date.now() >= c.expires_at || c.capabilities.preference_events !== true || c.capabilities.preferences !== true) { if(this.active)this.stop();return; }
+    if (!active || !c?.verified || (c.expires_at != null && Date.now() >= c.expires_at) || c.capabilities.preference_events !== true || c.capabilities.preferences !== true) { if(this.active)this.stop();return; }
     if (this.active && same(this.connection,c)) return;
     this.stop();this.active=true;this.connection=c;const controller=new AbortController();this.controller=controller;
     const run = async lock => {
@@ -75,7 +75,7 @@ export class TrackerPreferences {
   async listen(c,signal) {
     let failures=0;
     while(!signal.aborted) {
-      if(Date.now() >= c.expires_at){this.state('reconnect','The Job Hunt credential expired. Create a new credential.');return;}
+      if(c.expires_at != null && Date.now() >= c.expires_at){this.state('reconnect','The Job Hunt credential expired. Create a new credential.');return;}
       let retry=2000, idleTimer, reader;
       const operation=new AbortController(), abort=()=>operation.abort();signal.addEventListener('abort',abort,{once:true});
       const idle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>operation.abort(),65000)};

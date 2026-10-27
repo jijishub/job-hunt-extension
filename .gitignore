@@ -30,3 +30,5 @@ storageState*.json
 job-hunt-capture-*.json
 job-hunt-offline-request-*.json
 *.log
+feedback.txt
+
