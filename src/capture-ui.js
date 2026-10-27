@@ -47,6 +47,7 @@ export class CapturePanel {
     const draft = this.drafts.get(capture?.id), posting = draft?.values || capture?.posting;
     const salaryMin = posting?.salary_min === '' ? null : posting?.salary_min;
     const salaryMax = posting?.salary_max === '' ? null : posting?.salary_max;
+    const description = posting ? composeRequirements(posting) : '';
     const disabled = busy ? 'disabled' : '';
     const warnings = capture ? captureWarnings(capture) : [];
     const readiness = this.readiness.get(capture?.id);
@@ -79,6 +80,7 @@ export class CapturePanel {
         <p class="capture-summary-company">${esc(posting.company_name || '(Missing company)')}</p>
         <div class="capture-facts">${[posting.location,({REMOTE:'Remote',HYBRID:'Hybrid',ON_SITE:'On-site'})[posting.work_model],({FULL_TIME:'Full-time',PART_TIME:'Part-time',CONTRACT:'Contract',INTERNSHIP:'Internship'})[posting.job_type]].filter(Boolean).map(value=>`<span>${esc(value)}</span>`).join('')}</div>
         <p class="hint">Salary: ${salaryMin == null && salaryMax == null ? 'Not listed / not extracted' : esc(`${posting.salary_currency || 'Currency unknown'} ${salaryMin == null ? 'Up to ' + salaryMax : salaryMax == null ? 'From ' + salaryMin : salaryMin === salaryMax ? salaryMin : salaryMin + ' – ' + salaryMax}${posting.salary_period ? ' / ' + posting.salary_period.toLowerCase() : ' (period unknown)'}`)}</p>
+        ${description ? `<div class="capture-summary-description"><label class="label">JOB DESCRIPTION</label><div class="capture-description-text">${esc(description)}</div></div>` : ''}
       </div>
       ${['LINKEDIN','JOBSTREET','INDEED'].includes(posting.job_platform) && salaryMin == null && salaryMax == null && salarySnippets(capture.snapshot.candidates[capture.candidate_index]) ? `<button id="capture-salary-ai" type="button" class="button secondary full" ${disabled}>Interpret salary with AI</button><p class="hint">Sends salary excerpts to your configured AI gateway. Review the suggestion before saving.</p>` : ''}
       <p id="capture-salary-suggestion" class="hint" role="status">${draft?.salaryQuote ? `AI suggestion from: “${esc(draft.salaryQuote)}”. Check the salary fields and confirm review.` : ''}</p>
