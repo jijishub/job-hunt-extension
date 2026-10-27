@@ -8,7 +8,7 @@ A Chrome / Edge side panel for filling applications, capturing postings and asse
 2. Open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, then **Load unpacked** → select `build/`.
 3. Add up to three PDF, DOCX or TXT resumes (under 5 MB each), check their extracted text and complete your profile.
 4. Enter your gateway key in **Settings** for AI features. Capture alone needs no key or resume.
-5. To save jobs, create a credential in **Job Hunt → My preferences → Job Hunt extension** and connect in the extension's **Settings**. Enable **Share saved preferences and live updates** if wanted.
+5. To save jobs, create a credential in **Job Hunt → My preferences → Job Hunt extension** and connect in the extension's **Settings** (credentials remain connected persistently without artificial 24-hour expiration). Enable **Share saved preferences and live updates** if wanted.
 
 Shortcut: **Alt+Shift+J**. Reload the extension after rebuilding; a hosted preview does not install or update it.
 
@@ -18,7 +18,7 @@ Click **Capture current job**, check the details, **Confirm review**, choose a r
 
 Each tab keeps its own temporary posting, review, resume choice and fit. Switching tabs restores its work; resumes, preferences and the connection are shared. Confirm unsaved edits before closing the panel. Navigation starts a fresh workspace, except fragment changes. Browser/extension restarts reset temporary tab bindings. In-flight actions finish for their original job before the panel switches.
 
-Resolve missing/conflicting text beside the issue; optional unknowns can stay unknown. **Edit details** opens optional facts; one compact evidence panel and **Export capture** preserve sources. Editing facts reopens review and invalidates the current fit. Resume or preference changes also invalidate it. Connection settings and shared additional preference notes live in **Settings**. Interrupted assessments use the visible retry button; unfinished saves can be retried from Settings. Sampled LinkedIn, CGI Njoyn, Greenhouse and Lever layouts are supported; compatibility is not universal.
+Captured postings display a clean overview card showing the role title, company, work model/location/type facts, salary, and the full scrollable job description. If adjustments are needed, expand **Manual edit** to modify any fields. Click the single **Confirm review** (or **Confirm changes**) button to verify the capture; extraction warnings are automatically resolved using verified source text without multi-step confirmation checkboxes. One compact evidence panel and **Export capture** preserve sources. Editing facts reopens review and invalidates the current fit. Resume or preference changes also invalidate it. Connection settings and shared additional preference notes live in **Settings**. Interrupted assessments use the visible retry button; unfinished saves can be retried from Settings. Sampled LinkedIn, CGI Njoyn, Greenhouse and Lever layouts are supported; compatibility is not universal.
 
 **Clear capture data** clears all tabs and pending deliveries, while keeping resumes and Job Hunt records. Ordinary closed-tab work is cleaned up when the panel next runs; pending deliveries retain recovery evidence. Retries reuse the frozen request without new AI. Only a receipt confirms saving. Existing roles keep their edits/ratings. A capture saved without assessment cannot gain a fit later under the same ID.
 
@@ -46,7 +46,7 @@ npm run dev
 npm run build
 ```
 
-The web preview has separate data and cannot read other tabs. The installed extension needs no separate hosting deployment. `npm run` lists available checks. The latest UI passed 49 unit checks and `npm run test:capture:flow`, using a temporary extension build/profile, mocked AI and an isolated tracker. Tab activation is exercised with controlled active-tab reads. Production authentication, live posting layouts and the native side-panel surface remain unverified; your installed build was left unchanged.
+The web preview has separate data and cannot read other tabs. The installed extension needs no separate hosting deployment. `npm run` lists available checks. The latest UI passed 53 unit checks and `npm run test:capture:flow`, using a temporary extension build/profile, mocked AI and an isolated tracker. Tab activation is exercised with controlled active-tab reads. Production authentication, live posting layouts and the native side-panel surface remain unverified; your installed build was left unchanged.
 
 Details: [capture evidence](docs/extraction-pilot.md), [LinkedIn / CGI](docs/linkedin-cgi-capture.md), [role fit](docs/extension-role-fit.md), [preferences](docs/live-preferences.md), [offline contract](docs/offline-transport.md), [tracker handoff](docs/job-hunt-production-handoff.md).
 
