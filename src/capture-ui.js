@@ -195,16 +195,28 @@ export class CapturePanel {
       if (!(values.role_title || '').trim() || !(values.company_name || '').trim()) return;
       const decisions = readResolutions();
       const note = 'Compared the intended job title, employer and location, all available posting sections and qualifications with the original page and preserved source versions. Confirmed the current layout captures the intended job and its requirements are complete.';
+      const candidate = current.snapshot.candidates[current.candidate_index];
+      const original = candidate?.posting;
       for (const w of captureWarnings(current)) {
         let action;
-        if (['requirements_unverified', 'structured_only', 'unverified_layout'].includes(w.code)) action = 'verified_irrelevant';
-        if (w.code === 'collapsed_content') action = 'verified_irrelevant';
-        if (w.code === 'conflicting_sources' && w.field === 'description') {
-          const variant = sourceVariants(current.snapshot.candidates[current.candidate_index]).find(v => v.text === values.description);
-          action = variant ? `use_${variant.id}` : 'corrected';
+        if (['requirements_unverified', 'structured_only', 'unverified_layout', 'collapsed_content'].includes(w.code)) {
+          action = 'verified_irrelevant';
+        } else if (w.code === 'conflicting_sources') {
+          if (w.field === 'description') {
+            const variant = sourceVariants(candidate).find(v => v.text === values.description);
+            const changed = Boolean(current.corrections?.description || (original && JSON.stringify(values.description ?? null) !== JSON.stringify(original.description ?? null)));
+            action = variant ? `use_${variant.id}` : changed ? 'corrected' : 'verified_irrelevant';
+          } else {
+            const changed = Boolean(current.corrections?.[w.field] || (original && JSON.stringify(values[w.field] ?? null) !== JSON.stringify(original[w.field] ?? null)));
+            action = changed ? 'corrected' : 'verified_irrelevant';
+          }
+        } else if (w.code === 'invalid_salary_range') {
+          if ((values.salary_min == null && values.salary_max == null) || (values.salary_min != null && values.salary_max != null && Number(values.salary_min) <= Number(values.salary_max))) {
+            action = 'corrected';
+          }
+        } else if (['frames_not_read', 'source_truncated'].includes(w.code) || resolutionActions(current, w).includes('verified_irrelevant')) {
+          action = 'verified_irrelevant';
         }
-        if (['frames_not_read', 'source_truncated'].includes(w.code)) action = 'verified_irrelevant';
-        if (w.code === 'invalid_salary_range' && values.salary_min != null && values.salary_max != null && Number(values.salary_min) <= Number(values.salary_max)) action = 'corrected';
         if (action) {
           const index = decisions.findIndex(r => r.warning_id === w.id);
           if (index >= 0) decisions.splice(index, 1);
