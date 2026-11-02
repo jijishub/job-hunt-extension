@@ -44,6 +44,13 @@ export function captureWarnings(capture) {
     if (requirements.length > 30000) add('oversized_requirements', 'Composed requirements exceed the tracker assessment limit of 30,000 UTF-16 code units.', 'description');
   }
   add('requirements_unverified', `Completeness is unverified. ${composeRequirements(p).trim().length < 100 ? 'Only a short excerpt is present. ' : ''}Compare the preview with the full posting, including collapsed sections.`);
+  if (candidate) {
+    const variants = sourceVariants(candidate);
+    if (variants.length === 2 && variants[0].text.replace(/\s+/g, ' ').trim() !== variants[1].text.replace(/\s+/g, ' ').trim()
+      && !warnings.some(w => w.code === 'conflicting_sources' && w.field === 'description')) {
+      warnings.push({ id: 'quality-conflicting_sources-description', code: 'conflicting_sources', message: 'Structured and rendered descriptions differ. Both source versions are preserved; review for omitted requirements.', field: 'description', variant_ids: ['rendered', 'structured'] });
+    }
+  }
   return [...new Map(warnings.map(w => [w.id, w])).values()];
 }
 export function resolutionActions(capture, warning) {

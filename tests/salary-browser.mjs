@@ -50,6 +50,7 @@ try {
   await panel.reload();
   await linkedin.evaluate(()=>document.querySelector('.salary').textContent='Base salary is between PHP 30000 and PHP 45000 monthly');
   await panel.evaluate(async url=>{const all = await chrome.tabs.query({});const tab = all.find(t=>t.url===url);chrome.tabs.query=async()=>[await chrome.tabs.get(tab.id)];},linkedin.url());
+  await linkedin.bringToFront();
   await panel.locator('[data-tab=capture]').click();
   await panel.locator('#capture-posting').click();await panel.locator('#capture-salary-ai').waitFor();
   assert.equal(aiCalls,0,'Capture does not call AI automatically');

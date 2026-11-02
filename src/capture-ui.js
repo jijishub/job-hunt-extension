@@ -193,7 +193,8 @@ export class CapturePanel {
         }
       }
       if (!(values.role_title || '').trim() || !(values.company_name || '').trim()) return;
-      const decisions = readResolutions();
+      const validWarningIds = new Set(captureWarnings(current).map(w => w.id));
+      const decisions = readResolutions().filter(r => validWarningIds.has(r.warning_id));
       const note = 'Compared the intended job title, employer and location, all available posting sections and qualifications with the original page and preserved source versions. Confirmed the current layout captures the intended job and its requirements are complete.';
       const candidate = current.snapshot.candidates[current.candidate_index];
       const original = candidate?.posting;

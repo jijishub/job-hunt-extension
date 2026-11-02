@@ -147,7 +147,16 @@ export class CaptureDelivery {
       else if ([429, 503].includes(status)) { r.state = 'retry_wait'; r.next_retry_at = this.delay(response, r.attempts); }
       else { r.state = 'uncertain'; r.next_retry_at = this.delay(response, r.attempts); }
       r.error = `Tracker returned ${status}. ${status === 410 ? 'Stopped; do not recreate the deleted opening.' : status === 409 ? 'Inspect the conflict; UUID and content were retained.' : 'The full frozen request remains local.'}`;
-      if (status === 422) { try { const e = await response.json(); r.validation = e.error; } catch { /* Keep the status without raw HTML/error pages. */ } }
+      if (status === 422) {
+        try {
+          const e = await response.json();
+          r.validation = e.error;
+          if (e.error?.message) {
+            const detail = e.error.details?.reasons?.length ? ` (${e.error.details.reasons.join(', ')})` : e.error.path ? ` (${e.error.path})` : '';
+            r.error = `Tracker returned 422: ${e.error.message}${detail}. The full frozen request remains local.`;
+          }
+        } catch { /* Keep the status without raw HTML/error pages. */ }
+      }
       return this.save(r);
     });
   }
